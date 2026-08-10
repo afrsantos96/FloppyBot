@@ -221,6 +221,10 @@ class MinisterSchedule(commands.Cog):
         OLD_NAME = "Chief Minister"
         NEW_NAME = "Appointment"
 
+        archive_table_exists = self.svs_cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='minister_archive_appointments'"
+        ).fetchone() is not None
+
         legacy_rows = self.svs_cursor.execute(
             "SELECT COUNT(*) FROM appointments WHERE appointment_type=?", (OLD_NAME,)
         ).fetchone()[0]
@@ -228,7 +232,12 @@ class MinisterSchedule(commands.Cog):
             "SELECT COUNT(*) FROM reference WHERE context IN (?, ?)",
             (OLD_NAME, f"{OLD_NAME} channel")
         ).fetchone()[0]
-        if not legacy_rows and not legacy_reference_keys:
+        legacy_archive_rows = 0
+        if archive_table_exists:
+            legacy_archive_rows = self.svs_cursor.execute(
+                "SELECT COUNT(*) FROM minister_archive_appointments WHERE appointment_type=?", (OLD_NAME,)
+            ).fetchone()[0]
+        if not legacy_rows and not legacy_reference_keys and not legacy_archive_rows:
             return  # nothing to migrate
 
         try:
@@ -239,9 +248,6 @@ class MinisterSchedule(commands.Cog):
                 (NEW_NAME, OLD_NAME)
             )
 
-            archive_table_exists = self.svs_cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='minister_archive_appointments'"
-            ).fetchone() is not None
             if archive_table_exists:
                 self.svs_cursor.execute(
                     "UPDATE minister_archive_appointments SET appointment_type=? WHERE appointment_type=?",
