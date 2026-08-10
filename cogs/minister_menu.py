@@ -610,7 +610,7 @@ class MinisterMenu(commands.Cog):
                 description="No appointments currently booked.",
                 color=theme.emColor1
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             return
 
         # Build booking list with user info
@@ -638,8 +638,8 @@ class MinisterMenu(commands.Cog):
             color=theme.emColor1
         )
         embed.set_footer(text=f"Total bookings: {len(bookings)}/48")
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        await interaction.followup.send(embed=embed)
     
     async def update_minister_names(self, interaction: discord.Interaction, activity_name: str):
         """Open a modal to manually set booked ministers' names for this activity."""
