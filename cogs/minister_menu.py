@@ -591,8 +591,16 @@ class MinisterMenu(commands.Cog):
         token = sign_token(payload, cfg.signing_secret)
         link = f"{cfg.base_url}/portal/{token}"
 
+        # A link-style button, not raw URL text: Discord's servers auto-crawl
+        # plain-text URLs in messages to generate a link preview, which silently
+        # consumes a single-use token before the admin ever clicks it. A button's
+        # url isn't message content, so it isn't crawled.
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Open Portal", style=discord.ButtonStyle.link, url=link, emoji=f"{theme.linkIcon}"))
+
         await interaction.followup.send(
-            f"{theme.verifiedIcon} Your one-time portal link (expires in 5 minutes, single use):\n{link}",
+            f"{theme.verifiedIcon} Your one-time portal link (expires in 5 minutes, single use).",
+            view=view,
             ephemeral=True
         )
 

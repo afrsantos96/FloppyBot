@@ -208,3 +208,30 @@ def test_clear_does_not_touch_a_different_slot_for_the_same_fid(tmp_path, monkey
     with sqlite3.connect(svs_path) as c:
         rows = c.execute("SELECT fid, time FROM appointments WHERE appointment_type='Chief Minister'").fetchall()
     assert rows == [(1, "09:00")], "fid 1's own 09:00 booking must survive a clear targeted at 10:00"
+
+
+def test_link_preview_bot_does_not_consume_the_token(tmp_path, monkeypatch):
+    """Discord (and other chat apps) auto-fetch plain-text URLs server-side to
+    build a link preview. If that fetch consumed the single-use token, the
+    admin's own click would find the link already 'used'. A request carrying
+    a known link-preview-bot User-Agent must be answered without touching
+    portal_tokens, so the real click afterward still succeeds."""
+    _setup_dbs(tmp_path, monkeypatch)
+    cfg = PortalConfig(port=0, base_url="http://testserver", signing_secret="test-secret")
+
+    payload = auth.issue_magic_link_payload(discord_user_id=1001, guild_id=999)
+    auth.record_portal_token(payload["jti"], 1001)
+    token = auth.sign_token(payload, cfg.signing_secret)
+
+    async def run(client):
+        bot_resp = await client.get(f"/portal/{token}", headers={"User-Agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"}, allow_redirects=False)
+        bot_status = bot_resp.status
+
+        real_resp = await client.get(f"/portal/{token}", allow_redirects=False)
+        real_status = real_resp.status
+
+        return bot_status, real_status
+
+    bot_status, real_status = asyncio.run(_with_client(cfg, run))
+    assert bot_status == 200, "the crawler request itself must not error"
+    assert real_status == 302, "the admin's real click must still redeem the link successfully"

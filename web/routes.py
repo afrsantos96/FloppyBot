@@ -15,6 +15,23 @@ logger = logging.getLogger('bot')
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Chat apps auto-crawl plain-text URLs server-side to build a link preview --
+# a request from one of these must not consume a single-use token, or the
+# admin's own click finds it already "used" before they ever open it. This
+# is defense-in-depth: the Discord button also avoids putting the raw URL in
+# message text (which is what triggers Discord's own crawler) in the first
+# place, but other platforms/relays this link gets forwarded through could
+# still crawl it.
+_LINK_PREVIEW_BOT_UA_MARKERS = (
+    "discordbot", "facebookexternalhit", "slackbot", "telegrambot",
+    "whatsapp", "twitterbot", "linkedinbot", "skypeuripreview", "embedly",
+)
+
+
+def _looks_like_link_preview_bot(request: web.Request) -> bool:
+    ua = request.headers.get("User-Agent", "").lower()
+    return any(marker in ua for marker in _LINK_PREVIEW_BOT_UA_MARKERS)
+
 
 def _resolve_log_user(bot, discord_user_id: int, guild_id):
     """Best-effort discord.py user-like object for MinisterSchedule.log_change,
@@ -43,6 +60,11 @@ async def redeem_token(request: web.Request) -> web.StreamResponse:
                  "(Minister Scheduling → Online Manage Portal).",
             status=400,
         )
+
+    if _looks_like_link_preview_bot(request):
+        # Don't burn the single use on an automated preview fetch -- reply
+        # without touching portal_tokens so the admin's real click still works.
+        return web.Response(text="Kingshot minister portal link.", status=200)
 
     consumed = await asyncio.to_thread(auth.consume_portal_token, payload["jti"])
     if not consumed:
