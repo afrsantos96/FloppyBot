@@ -72,7 +72,10 @@ def _session_cookie(cfg, discord_user_id=1001, guild_id=999):
 
 
 async def _with_client(cfg, coro_fn):
-    fake_bot = SimpleNamespace(get_cog=lambda name: None)
+    # get_guild/get_user simulate "not cached" (falls through to the
+    # SimpleNamespace fallback in _resolve_log_user) -- a real discord.py
+    # Bot always has both, this fixture just needs to mimic their shape.
+    fake_bot = SimpleNamespace(get_cog=lambda name: None, get_guild=lambda gid: None, get_user=lambda uid: None)
     app = server.create_app(fake_bot, cfg)
     test_server = test_utils.TestServer(app)
     client = test_utils.TestClient(test_server)
