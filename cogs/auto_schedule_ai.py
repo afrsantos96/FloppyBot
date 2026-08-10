@@ -16,7 +16,7 @@ import os
 
 logger = logging.getLogger('bot')
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-flash-latest"
 
 _PROMPT_TEMPLATE = """You are extracting Chief Minister time-slot scheduling requests for a mobile strategy game alliance, from a batch of Discord messages. Each message is one governor's request, possibly in any language, in inconsistent formats.
 
