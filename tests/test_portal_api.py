@@ -60,7 +60,6 @@ def _setup_dbs(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "SVS_DB", str(svs_path))
     monkeypatch.setattr(db, "USERS_DB", str(users_path))
     monkeypatch.setattr(db, "ALLIANCE_DB", str(alliance_path))
-    monkeypatch.setattr(auth, "SVS_DB", str(svs_path))
 
     return svs_path
 
@@ -210,28 +209,48 @@ def test_clear_does_not_touch_a_different_slot_for_the_same_fid(tmp_path, monkey
     assert rows == [(1, "09:00")], "fid 1's own 09:00 booking must survive a clear targeted at 10:00"
 
 
-def test_link_preview_bot_does_not_consume_the_token(tmp_path, monkeypatch):
+def test_link_preview_bot_does_not_get_a_session(tmp_path, monkeypatch):
     """Discord (and other chat apps) auto-fetch plain-text URLs server-side to
-    build a link preview. If that fetch consumed the single-use token, the
-    admin's own click would find the link already 'used'. A request carrying
-    a known link-preview-bot User-Agent must be answered without touching
-    portal_tokens, so the real click afterward still succeeds."""
+    build a link preview. A request carrying a known link-preview-bot
+    User-Agent must be answered without issuing a session cookie or redirect,
+    while a real client hitting the same link still works normally."""
     _setup_dbs(tmp_path, monkeypatch)
     cfg = PortalConfig(port=0, base_url="http://testserver", signing_secret="test-secret")
 
     payload = auth.issue_magic_link_payload(discord_user_id=1001, guild_id=999)
-    auth.record_portal_token(payload["jti"], 1001)
     token = auth.sign_token(payload, cfg.signing_secret)
 
     async def run(client):
         bot_resp = await client.get(f"/portal/{token}", headers={"User-Agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"}, allow_redirects=False)
         bot_status = bot_resp.status
+        bot_got_cookie = auth.SESSION_COOKIE_NAME in bot_resp.cookies
 
         real_resp = await client.get(f"/portal/{token}", allow_redirects=False)
         real_status = real_resp.status
 
-        return bot_status, real_status
+        return bot_status, bot_got_cookie, real_status
 
-    bot_status, real_status = asyncio.run(_with_client(cfg, run))
+    bot_status, bot_got_cookie, real_status = asyncio.run(_with_client(cfg, run))
     assert bot_status == 200, "the crawler request itself must not error"
-    assert real_status == 302, "the admin's real click must still redeem the link successfully"
+    assert bot_got_cookie is False, "a crawler must not be handed a session cookie"
+    assert real_status == 302, "a real client hitting the link must still redeem it successfully"
+
+
+def test_magic_link_is_reusable_across_multiple_opens(tmp_path, monkeypatch):
+    """Links are valid until they expire, not single-use -- opening the same
+    link twice (e.g. a page reload, or clicking it again) must not fail."""
+    _setup_dbs(tmp_path, monkeypatch)
+    cfg = PortalConfig(port=0, base_url="http://testserver", signing_secret="test-secret")
+
+    payload = auth.issue_magic_link_payload(discord_user_id=1001, guild_id=999)
+    token = auth.sign_token(payload, cfg.signing_secret)
+
+    async def run(client):
+        statuses = []
+        for _ in range(3):
+            resp = await client.get(f"/portal/{token}", allow_redirects=False)
+            statuses.append(resp.status)
+        return statuses
+
+    statuses = asyncio.run(_with_client(cfg, run))
+    assert statuses == [302, 302, 302], "every open of the same link must succeed until it expires"

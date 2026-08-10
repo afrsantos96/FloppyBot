@@ -4,9 +4,11 @@ only (no itsdangerous) -- the token shape is simple enough that adding a
 dependency isn't worth it.
 
 Two token kinds share the same sign/verify machinery:
-  - the one-time magic link (short expiry, single-use via portal_tokens)
-  - the session cookie issued after redeeming a link (longer expiry, not
-    single-use, never appears in a URL/referrer/log line)
+  - the magic link (short expiry, reusable until it expires -- not single-use,
+    since chat-client link crawlers and page reloads made single-use links
+    unreliable in practice)
+  - the session cookie issued after opening a link (longer expiry, never
+    appears in a URL/referrer/log line)
 
 Discord identity is trusted because the token's discord_user_id is only ever
 set server-side, at the moment the bot's own button callback fires -- by
@@ -18,7 +20,6 @@ import hashlib
 import hmac
 import json
 import time
-import sqlite3
 import secrets as secrets_mod
 from typing import Optional
 
@@ -27,8 +28,6 @@ from aiohttp import web
 SESSION_COOKIE_NAME = "ks_portal_session"
 SESSION_MAX_AGE_SECONDS = 2 * 60 * 60      # 2 hours
 MAGIC_LINK_MAX_AGE_SECONDS = 5 * 60        # 5 minutes
-
-SVS_DB = "db/svs.sqlite"
 
 
 def _b64encode(data: bytes) -> str:
@@ -95,29 +94,6 @@ def issue_session_payload(discord_user_id: int, guild_id: int) -> dict:
     }
 
 
-def record_portal_token(jti: str, discord_user_id: int) -> None:
-    """Insert the unconsumed jti row so it can later be single-use-checked.
-    Uses its own short-lived connection (matches PermissionManager's
-    per-call-connection pattern) rather than reaching into a cog's shared
-    cursor, since this may be called from a thread-pool worker."""
-    with sqlite3.connect(SVS_DB, timeout=30.0) as db:
-        db.execute(
-            "INSERT INTO portal_tokens (jti, discord_user_id, created_at) VALUES (?, ?, datetime('now'))",
-            (jti, discord_user_id),
-        )
-        db.commit()
-
-
-def consume_portal_token(jti: str) -> bool:
-    """Atomically mark a token consumed. Returns True the first time (link
-    valid), False if it was already used or never issued."""
-    with sqlite3.connect(SVS_DB, timeout=30.0) as db:
-        cur = db.execute(
-            "UPDATE portal_tokens SET consumed_at = datetime('now') WHERE jti = ? AND consumed_at IS NULL",
-            (jti,),
-        )
-        db.commit()
-        return cur.rowcount > 0
 
 
 def set_session_cookie(response: web.Response, token: str, secure: bool) -> None:

@@ -49,7 +49,8 @@ def _resolve_log_user(bot, discord_user_id: int, guild_id):
 
 
 async def redeem_token(request: web.Request) -> web.StreamResponse:
-    """GET /portal/{token} -- consume a one-time magic link and start a session."""
+    """GET /portal/{token} -- open a magic link and start a session. Reusable
+    (not single-use) until the link's own expiry passes -- see web/auth.py."""
     cfg = request.app["portal_config"]
     token = request.match_info["token"]
 
@@ -62,16 +63,8 @@ async def redeem_token(request: web.Request) -> web.StreamResponse:
         )
 
     if _looks_like_link_preview_bot(request):
-        # Don't burn the single use on an automated preview fetch -- reply
-        # without touching portal_tokens so the admin's real click still works.
+        # Don't hand a session cookie to an automated preview fetch.
         return web.Response(text="Kingshot minister portal link.", status=200)
-
-    consumed = await asyncio.to_thread(auth.consume_portal_token, payload["jti"])
-    if not consumed:
-        return web.Response(
-            text="This portal link has already been used. Generate a new one from Discord.",
-            status=400,
-        )
 
     session_payload = auth.issue_session_payload(payload["discord_user_id"], payload["guild_id"])
     session_token = auth.sign_token(session_payload, cfg.signing_secret)

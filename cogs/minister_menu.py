@@ -10,7 +10,7 @@ from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message
 from .alliance_member_edit import apply_member_edit
 from web.config import load_portal_config
-from web.auth import issue_magic_link_payload, record_portal_token, sign_token
+from web.auth import issue_magic_link_payload, sign_token
 
 logger = logging.getLogger('bot')
 
@@ -587,7 +587,6 @@ class MinisterMenu(commands.Cog):
             return
 
         payload = issue_magic_link_payload(interaction.user.id, guild_id)
-        record_portal_token(payload["jti"], interaction.user.id)
         token = sign_token(payload, cfg.signing_secret)
         link = f"{cfg.base_url}/portal/{token}"
 
@@ -599,7 +598,7 @@ class MinisterMenu(commands.Cog):
         view.add_item(discord.ui.Button(label="Open Portal", style=discord.ButtonStyle.link, url=link, emoji=f"{theme.linkIcon}"))
 
         await interaction.followup.send(
-            f"{theme.verifiedIcon} Your one-time portal link (expires in 5 minutes, single use).",
+            f"{theme.verifiedIcon} Your portal link (valid for 5 minutes).",
             view=view,
             ephemeral=True
         )

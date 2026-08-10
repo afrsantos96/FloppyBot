@@ -1,9 +1,10 @@
 """
-sign_token/verify_token and single-use portal_tokens consumption -- the
-magic-link auth primitives the portal's whole security model rests on.
+sign_token/verify_token -- the magic-link auth primitives the portal's whole
+security model rests on. Links are reusable (not single-use) until their own
+expiry, since chat-client link crawlers and page reloads made single-use
+links unreliable in practice -- see web/auth.py's module docstring.
 """
 import importlib
-import sqlite3
 import time
 
 auth = importlib.import_module("web.auth")
@@ -53,28 +54,17 @@ def test_session_payload_has_longer_expiry():
     assert auth.SESSION_MAX_AGE_SECONDS > auth.MAGIC_LINK_MAX_AGE_SECONDS
 
 
-def _portal_tokens_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "svs.sqlite"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("""CREATE TABLE portal_tokens (
-        jti TEXT PRIMARY KEY, discord_user_id INTEGER NOT NULL,
-        created_at TEXT NOT NULL, consumed_at TEXT)""")
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(auth, "SVS_DB", str(db_path))
-    return db_path
+def test_magic_link_token_verifies_repeatedly_before_expiry():
+    """The whole point of dropping single-use tracking: the same link must
+    keep working across multiple opens as long as it hasn't expired yet."""
+    payload = auth.issue_magic_link_payload(discord_user_id=42, guild_id=99)
+    token = auth.sign_token(payload, "secret")
 
+    first = auth.verify_token(token, "secret", auth.MAGIC_LINK_MAX_AGE_SECONDS)
+    second = auth.verify_token(token, "secret", auth.MAGIC_LINK_MAX_AGE_SECONDS)
+    third = auth.verify_token(token, "secret", auth.MAGIC_LINK_MAX_AGE_SECONDS)
 
-def test_portal_token_is_single_use(tmp_path, monkeypatch):
-    _portal_tokens_db(tmp_path, monkeypatch)
-
-    auth.record_portal_token("jti-123", discord_user_id=42)
-
-    assert auth.consume_portal_token("jti-123") is True, "first redemption must succeed"
-    assert auth.consume_portal_token("jti-123") is False, "second redemption of the same link must fail"
-
-
-def test_consuming_unknown_token_fails(tmp_path, monkeypatch):
-    _portal_tokens_db(tmp_path, monkeypatch)
-
-    assert auth.consume_portal_token("never-issued") is False
+    assert first is not None
+    assert second is not None
+    assert third is not None
+    assert first["jti"] == second["jti"] == third["jti"]
