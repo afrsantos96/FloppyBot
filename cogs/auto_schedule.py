@@ -5,7 +5,7 @@ Discord channel, uses Gemini (cogs/auto_schedule_ai.py) to extract structured
 assigns each person exactly one of the 48 daily Chief-Minister-style slots.
 
 Stored as appointments rows with appointment_type='Auto Schedule' -- a fully
-independent schedule from the Chief Minister one (same table, different
+independent schedule from the Appointment one (same table, different
 appointment_type, so the existing unique indexes keep them from ever
 colliding), always as manual_name rows since these are free-text names that
 won't reliably match registered users.
@@ -191,7 +191,7 @@ class AutoSchedule(commands.Cog):
         embed = discord.Embed(
             title=f"{theme.robotIcon} Auto Schedule",
             description=(
-                f"A separate schedule from Chief Minister, filled automatically from requests "
+                f"A separate schedule from Appointment, filled automatically from requests "
                 f"posted in a channel -- each message is parsed by AI (Gemini) into a name, "
                 f"a speedup amount, and a preferred time, then everyone is assigned exactly "
                 f"one of the 48 daily slots (highest speedup amount gets first pick).\n\n"

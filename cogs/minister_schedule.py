@@ -51,11 +51,11 @@ class ChannelSelect(discord.ui.ChannelSelect):
         try:
             # Check if we're updating a minister channel
             if self.context.endswith("channel"):
-                # Get the activity name from the context (e.g., "Chief Minister channel" -> "Chief Minister")
+                # Get the activity name from the context (e.g., "Appointment channel" -> "Appointment")
                 activity_name = self.context.replace(" channel", "")
 
-                # Check if this is a minister activity channel (Chief Minister or Auto Schedule)
-                if activity_name in ("Chief Minister", "Auto Schedule"):
+                # Check if this is a minister activity channel (Appointment or Auto Schedule)
+                if activity_name in ("Appointment", "Auto Schedule"):
                     # Get the old channel ID if it exists
                     svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (self.context,))
                     old_channel_row = svs_cursor.fetchone()
@@ -93,7 +93,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
             # Trigger message update in the new channel
             if self.context.endswith("channel"):
                 activity_name = self.context.replace(" channel", "")
-                if activity_name == "Chief Minister":
+                if activity_name == "Appointment":
                     minister_menu_cog = self.bot.get_cog("MinisterMenu")
                     if minister_menu_cog:
                         await minister_menu_cog.update_channel_message(activity_name)
@@ -113,7 +113,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
                         f"Configure channels for minister scheduling:\n\n"
                         f"**Channel Types**\n"
                         f"{theme.upperDivider}\n"
-                        f"{theme.settingsIcon} **Chief Minister Channel** - Shows the Chief Minister schedule\n"
+                        f"{theme.settingsIcon} **Appointment Channel** - Shows the Appointment schedule\n"
                         f"{theme.robotIcon} **Auto Schedule Channel** - Where governors post requests and the AI-generated schedule is shown\n"
                         f"{theme.documentIcon} **Log Channel** - Receives add/remove notifications\n"
                         f"{theme.lowerDivider}\n\n"
@@ -212,11 +212,70 @@ class MinisterSchedule(commands.Cog):
 
         self.svs_conn.commit()
         self._migrate_legacy_appointment_types()
+        self._migrate_chief_minister_rename()
+
+    def _migrate_chief_minister_rename(self):
+        """One-time rename: the merged single-minister schedule was originally
+        called "Chief Minister", now just "Appointment". Idempotent -- only
+        touches rows/reference keys that still say the old name."""
+        OLD_NAME = "Chief Minister"
+        NEW_NAME = "Appointment"
+
+        legacy_rows = self.svs_cursor.execute(
+            "SELECT COUNT(*) FROM appointments WHERE appointment_type=?", (OLD_NAME,)
+        ).fetchone()[0]
+        legacy_reference_keys = self.svs_cursor.execute(
+            "SELECT COUNT(*) FROM reference WHERE context IN (?, ?)",
+            (OLD_NAME, f"{OLD_NAME} channel")
+        ).fetchone()[0]
+        if not legacy_rows and not legacy_reference_keys:
+            return  # nothing to migrate
+
+        try:
+            # Pure rename of an already-unique type value -- no collision
+            # possible, unlike the legacy 3-type merge above.
+            self.svs_cursor.execute(
+                "UPDATE appointments SET appointment_type=? WHERE appointment_type=?",
+                (NEW_NAME, OLD_NAME)
+            )
+
+            archive_table_exists = self.svs_cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='minister_archive_appointments'"
+            ).fetchone() is not None
+            if archive_table_exists:
+                self.svs_cursor.execute(
+                    "UPDATE minister_archive_appointments SET appointment_type=? WHERE appointment_type=?",
+                    (NEW_NAME, OLD_NAME)
+                )
+
+            # Channel reference: rename "Chief Minister channel" -> "Appointment channel".
+            row = self.svs_cursor.execute(
+                "SELECT context_id FROM reference WHERE context=?", (f"{OLD_NAME} channel",)
+            ).fetchone()
+            if row:
+                self.svs_cursor.execute(
+                    "INSERT INTO reference (context, context_id) VALUES (?, ?) "
+                    "ON CONFLICT(context) DO UPDATE SET context_id = excluded.context_id",
+                    (f"{NEW_NAME} channel", row[0])
+                )
+                self.svs_cursor.execute("DELETE FROM reference WHERE context=?", (f"{OLD_NAME} channel",))
+
+            # Board message reference (bare name key) is intentionally just
+            # dropped, not renamed -- a fresh "Appointment" board message
+            # gets created under the new key next time the board refreshes.
+            self.svs_cursor.execute("DELETE FROM reference WHERE context=?", (OLD_NAME,))
+
+            self.svs_conn.commit()
+            logger.info(f"Migrated '{OLD_NAME}' appointment type to '{NEW_NAME}'")
+        except sqlite3.Error as e:
+            self.svs_conn.rollback()
+            logger.error(f"Failed to migrate '{OLD_NAME}' rename: {e}")
+            raise
 
     def _migrate_legacy_appointment_types(self):
         """One-time migration: the bot used to track three independent minister
         types (Construction/Research/Troops Training Day), but the game only has
-        one Chief Minister seat, so these are now a single merged schedule.
+        one Appointment seat, so these are now a single merged schedule.
         Idempotent -- a checked-for legacy row/channel is what gates a re-run.
         """
         LEGACY_TYPES = ("Construction Day", "Research Day", "Troops Training Day")
@@ -236,10 +295,10 @@ class MinisterSchedule(commands.Cog):
 
         try:
             # Three separate unique indexes apply once every legacy row becomes
-            # "Chief Minister": (appointment_type, time) -- two legacy rows at the
+            # "Appointment": (appointment_type, time) -- two legacy rows at the
             # same time collide; (fid, appointment_type) -- the same member holding
             # both e.g. a Construction Day slot and a Troops Training Day slot
-            # collides, since one person can only hold one Chief Minister seat;
+            # collides, since one person can only hold one Appointment seat;
             # (manual_name, appointment_type) -- same idea for portal-assigned
             # guest names. Keep the earliest row (by id) for each, drop the rest --
             # rare, but must not crash the merge.
@@ -258,7 +317,7 @@ class MinisterSchedule(commands.Cog):
                     logger.warning(
                         f"Dropping appointment id={row_id} (fid={fid}, manual_name={manual_name!r}, "
                         f"time={time_slot}): collides with another legacy-type booking during the "
-                        f"Chief Minister merge"
+                        f"Appointment merge"
                     )
                     self.svs_cursor.execute("DELETE FROM appointments WHERE id=?", (row_id,))
                 else:
@@ -269,7 +328,7 @@ class MinisterSchedule(commands.Cog):
                         seen_manual_names.add(manual_name)
 
             self.svs_cursor.execute(
-                "UPDATE appointments SET appointment_type='Chief Minister' WHERE appointment_type IN (?, ?, ?)",
+                "UPDATE appointments SET appointment_type='Appointment' WHERE appointment_type IN (?, ?, ?)",
                 LEGACY_TYPES
             )
 
@@ -278,7 +337,7 @@ class MinisterSchedule(commands.Cog):
             ).fetchone() is not None
             if archive_table_exists:
                 self.svs_cursor.execute(
-                    "UPDATE minister_archive_appointments SET appointment_type='Chief Minister' "
+                    "UPDATE minister_archive_appointments SET appointment_type='Appointment' "
                     "WHERE appointment_type IN (?, ?, ?)",
                     LEGACY_TYPES
                 )
@@ -291,7 +350,7 @@ class MinisterSchedule(commands.Cog):
                 ).fetchone()
                 if row:
                     self.svs_cursor.execute(
-                        "INSERT INTO reference (context, context_id) VALUES ('Chief Minister channel', ?) "
+                        "INSERT INTO reference (context, context_id) VALUES ('Appointment channel', ?) "
                         "ON CONFLICT(context) DO NOTHING",
                         (row[0],)
                     )
@@ -299,7 +358,7 @@ class MinisterSchedule(commands.Cog):
                 self.svs_cursor.execute("DELETE FROM reference WHERE context=?", (legacy_type,))
 
             self.svs_conn.commit()
-            logger.info("Migrated legacy Construction/Research/Troops Training Day minister types to a single Chief Minister schedule")
+            logger.info("Migrated legacy Construction/Research/Troops Training Day minister types to a single Appointment schedule")
         except sqlite3.Error as e:
             self.svs_conn.rollback()
             logger.error(f"Failed to migrate legacy minister appointment types: {e}")
@@ -384,7 +443,7 @@ class MinisterSchedule(commands.Cog):
         Args:
             action_type: Type of action (add, remove, reschedule, clear_all, time_slot_mode_change, archive_created)
             user: Discord user object who made the change
-            appointment_type: Always "Chief Minister" now (single merged schedule)
+            appointment_type: Always "Appointment" now (single merged schedule)
             fid: User FID
             nickname: User nickname
             old_time: Previous time slot (for reschedule)
@@ -665,9 +724,9 @@ class MinisterSchedule(commands.Cog):
             else:
                 return None
 
-    @discord.app_commands.command(name='minister_clear_all', description='Cancel all Chief Minister appointments.')
+    @discord.app_commands.command(name='minister_clear_all', description='Cancel all Appointment appointments.')
     async def minister_clear_all(self, interaction: discord.Interaction):
-        appointment_type = "Chief Minister"
+        appointment_type = "Appointment"
         if not await self.is_admin(interaction.user.id):
             await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
             return
@@ -780,13 +839,13 @@ class MinisterSchedule(commands.Cog):
             print(f"An error occurred: {e}")
             await interaction.followup.send(f"An error occurred while clearing the appointments: {e}", ephemeral=True)
         
-    @discord.app_commands.command(name='minister_list', description='View the Chief Minister schedule.')
+    @discord.app_commands.command(name='minister_list', description='View the Appointment schedule.')
     @app_commands.autocomplete(all_or_available=choice_autocomplete)
     @app_commands.describe(
         all_or_available="Show full schedule or only available slots.",
     )
     async def minister_list(self, interaction: discord.Interaction, all_or_available: str):
-        appointment_type = "Chief Minister"
+        appointment_type = "Appointment"
         try:
             await interaction.response.defer()
 

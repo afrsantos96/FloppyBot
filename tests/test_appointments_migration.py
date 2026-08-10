@@ -18,8 +18,8 @@ def _old_schema_svs_conn():
     conn.execute("""CREATE TABLE appointments (
         fid INTEGER, appointment_type TEXT, time TEXT, alliance INTEGER,
         PRIMARY KEY (fid, appointment_type))""")
-    conn.execute("INSERT INTO appointments VALUES (1, 'Chief Minister', '10:00', 5)")
-    conn.execute("INSERT INTO appointments VALUES (2, 'Chief Minister', '14:00', 5)")
+    conn.execute("INSERT INTO appointments VALUES (1, 'Appointment', '10:00', 5)")
+    conn.execute("INSERT INTO appointments VALUES (2, 'Appointment', '14:00', 5)")
     conn.commit()
     return conn
 
@@ -52,8 +52,8 @@ def test_migration_preserves_existing_rows():
         "SELECT fid, manual_name, appointment_type, time, alliance FROM appointments ORDER BY fid"
     ).fetchall()
     assert rows == [
-        (1, None, "Chief Minister", "10:00", 5),
-        (2, None, "Chief Minister", "14:00", 5),
+        (1, None, "Appointment", "10:00", 5),
+        (2, None, "Appointment", "14:00", 5),
     ]
 
 
@@ -75,12 +75,12 @@ def test_migrated_table_allows_manual_name_row_alongside_fid_rows():
 
     conn.execute(
         "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest Governor', 'Chief Minister', '09:00', NULL)"
+        "VALUES (NULL, 'Guest Governor', 'Appointment', '09:00', NULL)"
     )
     conn.commit()
 
     row = conn.execute(
-        "SELECT manual_name FROM appointments WHERE appointment_type='Chief Minister' AND time='09:00'"
+        "SELECT manual_name FROM appointments WHERE appointment_type='Appointment' AND time='09:00'"
     ).fetchone()
     assert row == ("Guest Governor",)
 
@@ -94,14 +94,14 @@ def test_migrated_table_rejects_double_booking_same_slot():
 
     conn.execute(
         "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest A', 'Chief Minister', '09:00', NULL)"
+        "VALUES (NULL, 'Guest A', 'Appointment', '09:00', NULL)"
     )
     conn.commit()
 
     try:
         conn.execute(
             "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-            "VALUES (NULL, 'Guest B', 'Chief Minister', '09:00', NULL)"
+            "VALUES (NULL, 'Guest B', 'Appointment', '09:00', NULL)"
         )
         conn.commit()
         assert False, "expected a unique constraint violation on (appointment_type, time)"
@@ -116,16 +116,16 @@ def test_migrated_table_allows_two_different_manual_names_on_different_slots():
 
     conn.execute(
         "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest A', 'Chief Minister', '09:00', NULL)"
+        "VALUES (NULL, 'Guest A', 'Appointment', '09:00', NULL)"
     )
     conn.execute(
         "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest B', 'Chief Minister', '09:30', NULL)"
+        "VALUES (NULL, 'Guest B', 'Appointment', '09:30', NULL)"
     )
     conn.commit()
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM appointments WHERE appointment_type='Chief Minister' AND manual_name IS NOT NULL"
+        "SELECT COUNT(*) FROM appointments WHERE appointment_type='Appointment' AND manual_name IS NOT NULL"
     ).fetchone()[0]
     assert count == 2
 
@@ -142,7 +142,7 @@ def _old_schema_archive_conn():
         alliance INTEGER NOT NULL, nickname TEXT NOT NULL,
         FOREIGN KEY (archive_id) REFERENCES minister_archives(archive_id))""")
     conn.execute("INSERT INTO minister_archives VALUES (1, 'Week 1', '2026-01-01T00:00:00', 10, 'Admin')")
-    conn.execute("INSERT INTO minister_archive_appointments VALUES (1, 1, 'Chief Minister', '10:00', 5, 'Alice')")
+    conn.execute("INSERT INTO minister_archive_appointments VALUES (1, 1, 'Appointment', '10:00', 5, 'Alice')")
     conn.commit()
     return conn
 
@@ -166,7 +166,7 @@ def test_archive_migration_adds_manual_name_and_relaxes_fid():
     # fid must now accept NULL (a manual/guest archived row)
     conn.execute(
         "INSERT INTO minister_archive_appointments (archive_id, fid, manual_name, appointment_type, time, alliance, nickname) "
-        "VALUES (1, NULL, 'Guest Governor', 'Chief Minister', '11:00', NULL, 'Guest Governor')"
+        "VALUES (1, NULL, 'Guest Governor', 'Appointment', '11:00', NULL, 'Guest Governor')"
     )
     conn.commit()
     count = conn.execute("SELECT COUNT(*) FROM minister_archive_appointments").fetchone()[0]
@@ -183,7 +183,7 @@ def test_archive_migration_preserves_existing_row():
         "SELECT archive_id, fid, manual_name, appointment_type, time, alliance, nickname "
         "FROM minister_archive_appointments"
     ).fetchone()
-    assert row == (1, 1, None, "Chief Minister", "10:00", 5, "Alice")
+    assert row == (1, 1, None, "Appointment", "10:00", 5, "Alice")
 
 
 def test_archive_migration_is_idempotent():

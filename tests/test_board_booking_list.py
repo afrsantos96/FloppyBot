@@ -41,12 +41,12 @@ def _mk_cog(svs, users, alliance):
 
 def test_fetch_booking_lines_formats_fid_and_manual_name_rows():
     svs, users, alliance = _dbs()
-    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Chief Minister', '10:00', 5)")
-    svs.execute("INSERT INTO appointments (manual_name, appointment_type, time) VALUES ('Guest Governor', 'Chief Minister', '09:00')")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Appointment', '10:00', 5)")
+    svs.execute("INSERT INTO appointments (manual_name, appointment_type, time) VALUES ('Guest Governor', 'Appointment', '09:00')")
     svs.commit()
     cog = _mk_cog(svs, users, alliance)
 
-    bookings, lines = cog._fetch_booking_lines("Chief Minister")
+    bookings, lines = cog._fetch_booking_lines("Appointment")
 
     assert len(bookings) == 2
     assert any("Guest Governor" in line for line in lines)
@@ -58,14 +58,14 @@ def test_update_channel_message_as_booking_list_posts_bookings_not_slots():
     call the portal used) shows all EMPTY slots by default (list_type=1) --
     the new method must show bookings regardless of that setting."""
     svs, users, alliance = _dbs()
-    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Chief Minister', '10:00', 5)")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Appointment', '10:00', 5)")
     svs.commit()
     cog = _mk_cog(svs, users, alliance)
 
     posted = {}
 
     async def get_channel_id(context):
-        return 555 if context == "Chief Minister channel" else None
+        return 555 if context == "Appointment channel" else None
 
     async def get_log_guild(_guild):
         fake_channel = SimpleNamespace(id=555)
@@ -82,7 +82,7 @@ def test_update_channel_message_as_booking_list_posts_bookings_not_slots():
     )
     cog.bot = SimpleNamespace(get_cog=lambda name: fake_schedule_cog)
 
-    asyncio.run(cog.update_channel_message_as_booking_list("Chief Minister"))
+    asyncio.run(cog.update_channel_message_as_booking_list("Appointment"))
 
     assert "Alice" in posted["content"]
     assert "TestAlli" in posted["content"]
@@ -112,6 +112,6 @@ def test_update_channel_message_as_booking_list_handles_no_bookings():
     )
     cog.bot = SimpleNamespace(get_cog=lambda name: fake_schedule_cog)
 
-    asyncio.run(cog.update_channel_message_as_booking_list("Chief Minister"))
+    asyncio.run(cog.update_channel_message_as_booking_list("Appointment"))
 
     assert "No appointments currently booked" in posted["content"]

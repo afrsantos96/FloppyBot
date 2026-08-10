@@ -311,11 +311,11 @@ class MinisterChannelView(discord.ui.View):
 
     @discord.ui.button(label="List", style=discord.ButtonStyle.primary, emoji=f"{theme.listIcon}")
     async def list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_current_schedule_list(interaction, "Chief Minister")
+        await self.cog.show_current_schedule_list(interaction, "Appointment")
 
     @discord.ui.button(label="Full List", style=discord.ButtonStyle.primary, emoji=f"{theme.listIcon}", row=1)
     async def full_list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_full_schedule_list(interaction, "Chief Minister")
+        await self.cog.show_full_schedule_list(interaction, "Appointment")
 
     @discord.ui.button(label="Auto Schedule", style=discord.ButtonStyle.success, emoji=f"{theme.robotIcon}", row=1)
     async def auto_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -348,9 +348,9 @@ class ChannelConfigurationView(discord.ui.View):
         self.bot = bot
         self.cog = cog
 
-    @discord.ui.button(label="Chief Minister Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.crownIcon}")
-    async def chief_minister_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_channel_selection(interaction, "Chief Minister channel", "Chief Minister")
+    @discord.ui.button(label="Appointment Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.crownIcon}")
+    async def appointment_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_channel_selection(interaction, "Appointment channel", "Appointment")
 
     @discord.ui.button(label="Auto Schedule Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.robotIcon}")
     async def auto_schedule_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -392,8 +392,8 @@ class ChannelConfigurationView(discord.ui.View):
                         f"Configure channels for minister scheduling:\n\n"
                         f"Channel Types\n"
                         f"{theme.upperDivider}\n\n"
-                        f"{theme.crownIcon} **Chief Minister Channel**\n"
-                        f"└ Shows the Chief Minister schedule\n\n"
+                        f"{theme.crownIcon} **Appointment Channel**\n"
+                        f"└ Shows the Appointment schedule\n\n"
                         f"{theme.robotIcon} **Auto Schedule Channel**\n"
                         f"└ Where governors post requests and the AI-generated schedule is shown\n\n"
                         f"{theme.listIcon} **Log Channel**\n"
@@ -461,7 +461,7 @@ class MinisterMenu(commands.Cog):
         embed = discord.Embed(
             title="🏛️ Minister Scheduling",
             description=(
-                f"Manage Chief Minister appointments here. Assigning ministers is done through "
+                f"Manage Appointment appointments here. Assigning ministers is done through "
                 f"the Online Manage Portal -- use List to just view the current schedule.\n\n"
                 f"**Channel Status**\n"
                 f"{theme.upperDivider}\n"
@@ -478,7 +478,7 @@ class MinisterMenu(commands.Cog):
                 f"{theme.settingsIcon} **Settings**\n"
                 f"└ Update names, clear reservations and more\n\n"
                 f"{theme.listIcon} **List**\n"
-                f"└ View the current Chief Minister schedule\n"
+                f"└ View the current Appointment schedule\n"
                 f"{theme.lowerDivider}"
             ),
             color=embed_color
@@ -494,8 +494,8 @@ class MinisterMenu(commands.Cog):
                 f"Configure channels for minister scheduling:\n\n"
                 f"Channel Types\n"
                 f"{theme.upperDivider}\n\n"
-                f"{theme.crownIcon} **Chief Minister Channel**\n"
-                f"└ Shows the Chief Minister schedule\n\n"
+                f"{theme.crownIcon} **Appointment Channel**\n"
+                f"└ Shows the Appointment schedule\n\n"
                 f"{theme.robotIcon} **Auto Schedule Channel**\n"
                 f"└ Where governors post requests and the AI-generated schedule is shown\n\n"
                 f"{theme.listIcon} **Log Channel**\n"
@@ -526,7 +526,7 @@ class MinisterMenu(commands.Cog):
 
         # Define channels to check
         channels_config = [
-            ("Chief Minister channel", f"{theme.crownIcon} Chief Minister"),
+            ("Appointment channel", f"{theme.crownIcon} Appointment"),
             ("minister log channel", f"{theme.listIcon} Log Channel")
         ]
 
@@ -837,7 +837,7 @@ class MinisterMenu(commands.Cog):
             @discord.ui.select(
                 placeholder="Select channels to clear...",
                 options=[
-                    discord.SelectOption(label="Chief Minister Channel", value="Chief Minister", emoji=theme.crownIcon),
+                    discord.SelectOption(label="Appointment Channel", value="Appointment", emoji=theme.crownIcon),
                     discord.SelectOption(label="Auto Schedule Channel", value="Auto Schedule", emoji=theme.robotIcon),
                     discord.SelectOption(label="Log Channel", value="minister log", emoji=theme.documentIcon),
                     discord.SelectOption(label="All Channels", value="ALL", emoji=theme.trashIcon, description="Clear all channel configurations")
@@ -856,8 +856,8 @@ class MinisterMenu(commands.Cog):
                         for value in select.values:
                             if value == "ALL":
                                 # Clear the minister channels
-                                await self._clear_channel_config(svs_cursor, "Chief Minister", interaction.guild)
-                                cleared_channels.append("Chief Minister channel")
+                                await self._clear_channel_config(svs_cursor, "Appointment", interaction.guild)
+                                cleared_channels.append("Appointment channel")
 
                                 await self._clear_channel_config(svs_cursor, "Auto Schedule", interaction.guild)
                                 cleared_channels.append("Auto Schedule channel")
@@ -983,11 +983,11 @@ class MinisterMenu(commands.Cog):
         await safe_edit_message(interaction, embed=embed, view=view, content=None)
 
     async def show_activity_selection_for_update(self, interaction: discord.Interaction):
-        """Update names for the Chief Minister schedule (only one activity now, so no selector needed)."""
-        await self.update_minister_names(interaction, "Chief Minister")
+        """Update names for the Appointment schedule (only one activity now, so no selector needed)."""
+        await self.update_minister_names(interaction, "Appointment")
 
     async def show_activity_selection_for_clear(self, interaction: discord.Interaction):
-        """Clear reservations for the Chief Minister schedule (only one activity now, so no selector needed)."""
+        """Clear reservations for the Appointment schedule (only one activity now, so no selector needed)."""
 
         minister_schedule_cog = self.bot.get_cog("MinisterSchedule")
         if not minister_schedule_cog:
@@ -1010,7 +1010,7 @@ class MinisterMenu(commands.Cog):
                 f"[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel", ephemeral=True)
             return
 
-        await self.show_clear_confirmation(interaction, "Chief Minister")
+        await self.show_clear_confirmation(interaction, "Appointment")
 
     async def show_time_slot_mode_menu(self, interaction: discord.Interaction):
         """Show time slot mode selection menu"""
@@ -1150,7 +1150,7 @@ class MinisterMenu(commands.Cog):
                 )
 
                 # Update the channel message
-                await self.update_channel_message("Chief Minister")
+                await self.update_channel_message("Appointment")
 
             # Show success
             mode_labels = {0: "Standard", 1: "Offset"}

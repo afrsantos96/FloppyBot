@@ -1,8 +1,8 @@
 """
 The bot used to track three independent minister types (Construction Day,
-Research Day, Troops Training Day). The game only has one Chief Minister
+Research Day, Troops Training Day). The game only has one Appointment
 seat, so MinisterSchedule._migrate_legacy_appointment_types collapses all
-three into a single "Chief Minister" schedule, including channel config.
+three into a single "Appointment" schedule, including channel config.
 """
 import importlib
 import sqlite3
@@ -31,7 +31,7 @@ def _mk_cog(conn):
     return cog
 
 
-def test_legacy_rows_renamed_to_chief_minister():
+def test_legacy_rows_renamed_to_appointment():
     conn = _new_schema_conn()
     conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Construction Day', '10:00', 5)")
     conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (2, 'Research Day', '14:00', 5)")
@@ -41,26 +41,26 @@ def test_legacy_rows_renamed_to_chief_minister():
     cog._migrate_legacy_appointment_types()
 
     types = {row[0] for row in conn.execute("SELECT DISTINCT appointment_type FROM appointments").fetchall()}
-    assert types == {"Chief Minister"}
+    assert types == {"Appointment"}
     count = conn.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
     assert count == 2, "both rows must survive, just renamed"
 
 
 def test_no_op_when_nothing_legacy_present():
     conn = _new_schema_conn()
-    conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Chief Minister', '10:00', 5)")
+    conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Appointment', '10:00', 5)")
     conn.commit()
     cog = _mk_cog(conn)
 
     cog._migrate_legacy_appointment_types()  # must not raise / must not touch anything
 
     row = conn.execute("SELECT appointment_type FROM appointments").fetchone()
-    assert row == ("Chief Minister",)
+    assert row == ("Appointment",)
 
 
 def test_same_time_collision_across_legacy_types_keeps_one():
     """Construction Day 10:00 and Research Day 10:00 would both become
-    Chief Minister 10:00 -- the unique (appointment_type, time) index means
+    Appointment 10:00 -- the unique (appointment_type, time) index means
     only one can survive. The migration must drop the extra, not crash."""
     conn = _new_schema_conn()
     conn.execute("CREATE UNIQUE INDEX idx_appt_type_time ON appointments(appointment_type, time)")
@@ -72,14 +72,14 @@ def test_same_time_collision_across_legacy_types_keeps_one():
     cog._migrate_legacy_appointment_types()  # must not raise IntegrityError
 
     rows = conn.execute("SELECT fid, appointment_type, time FROM appointments").fetchall()
-    assert rows == [(1, "Chief Minister", "10:00")], "the earlier row (lower id) must be kept"
+    assert rows == [(1, "Appointment", "10:00")], "the earlier row (lower id) must be kept"
 
 
 def test_same_fid_across_legacy_types_keeps_one():
     """A member holding both a Construction Day slot AND a Troops Training Day
     slot (different times, so no time collision) would violate the
-    (fid, appointment_type) unique index once both become Chief Minister --
-    one person can only hold one Chief Minister seat. Reproduces a real
+    (fid, appointment_type) unique index once both become Appointment --
+    one person can only hold one Appointment seat. Reproduces a real
     IntegrityError hit in production."""
     conn = _new_schema_conn()
     conn.execute("CREATE UNIQUE INDEX idx_appt_fid_type ON appointments(fid, appointment_type) WHERE fid IS NOT NULL")
@@ -91,10 +91,10 @@ def test_same_fid_across_legacy_types_keeps_one():
     cog._migrate_legacy_appointment_types()  # must not raise IntegrityError
 
     rows = conn.execute("SELECT fid, appointment_type, time FROM appointments").fetchall()
-    assert rows == [(42, "Chief Minister", "00:00")], "the earlier row (lower id) must be kept"
+    assert rows == [(42, "Appointment", "00:00")], "the earlier row (lower id) must be kept"
 
 
-def test_legacy_channels_consolidated_to_chief_minister_channel():
+def test_legacy_channels_consolidated_to_appointment_channel():
     conn = _new_schema_conn()
     conn.execute("INSERT INTO reference VALUES ('Construction Day channel', 555)")
     conn.execute("INSERT INTO reference VALUES ('Research Day channel', 555)")
@@ -104,7 +104,7 @@ def test_legacy_channels_consolidated_to_chief_minister_channel():
 
     cog._migrate_legacy_appointment_types()
 
-    row = conn.execute("SELECT context_id FROM reference WHERE context='Chief Minister channel'").fetchone()
+    row = conn.execute("SELECT context_id FROM reference WHERE context='Appointment channel'").fetchone()
     assert row == (555,)
     for legacy_type in LEGACY_TYPES:
         assert conn.execute(
@@ -115,7 +115,7 @@ def test_legacy_channels_consolidated_to_chief_minister_channel():
 def test_legacy_board_message_references_removed():
     """Board message ids were keyed by the bare activity name (e.g.
     'Construction Day' -> message_id) -- these must be cleared so a fresh
-    'Chief Minister' board message gets created instead of reusing a stale id."""
+    'Appointment' board message gets created instead of reusing a stale id."""
     conn = _new_schema_conn()
     conn.execute("INSERT INTO reference VALUES ('Construction Day', 999888777)")
     conn.commit()
@@ -138,5 +138,5 @@ def test_migration_is_idempotent():
 
     count = conn.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
     assert count == 1
-    row = conn.execute("SELECT context_id FROM reference WHERE context='Chief Minister channel'").fetchone()
+    row = conn.execute("SELECT context_id FROM reference WHERE context='Appointment channel'").fetchone()
     assert row == (555,)

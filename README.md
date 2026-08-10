@@ -23,10 +23,10 @@ The portal binds to `127.0.0.1` in the provided `docker-compose.yml` — put a r
 
 ## 🤖 Auto Schedule (optional)
 
-A separate schedule from Chief Minister, filled automatically: governors post free-text requests (in any language/format) in a configured channel, and the "Generate Schedule" button reads all of them, uses Google's Gemini API to extract each person's name/speedup amount/preferred time, then deterministically assigns everyone exactly one of the 48 daily slots (highest speedup amount gets first pick on contested slots).
+A separate schedule from Appointment, filled automatically: governors post free-text requests (in any language/format) in a configured channel, and the "Generate Schedule" button reads all of them, uses Google's Gemini API to extract each person's name/speedup amount/preferred time, then deterministically assigns everyone exactly one of the 48 daily slots (highest speedup amount gets first pick on contested slots).
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | yes, for this feature only | A free API key from [Google AI Studio](https://aistudio.google.com/apikey). Without it, every other bot feature (including the Chief Minister schedule and the web portal) still works normally — only Generate Schedule will show an error until it's set. |
+| `GEMINI_API_KEY` | yes, for this feature only | A free API key from [Google AI Studio](https://aistudio.google.com/apikey). Without it, every other bot feature (including the Appointment schedule and the web portal) still works normally — only Generate Schedule will show an error until it's set. |
 
 This is unrelated to a Claude subscription — Claude Pro doesn't grant API access, so this feature uses Gemini's free tier instead.
