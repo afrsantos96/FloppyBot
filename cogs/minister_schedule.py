@@ -56,11 +56,11 @@ class ChannelSelect(discord.ui.ChannelSelect):
         try:
             # Check if we're updating a minister channel
             if self.context.endswith("channel"):
-                # Get the activity name from the context (e.g., "Construction Day channel" -> "Construction Day")
+                # Get the activity name from the context (e.g., "Chief Minister channel" -> "Chief Minister")
                 activity_name = self.context.replace(" channel", "")
-                
-                # Check if this is one of the minister activity channels
-                if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
+
+                # Check if this is the minister activity channel
+                if activity_name == "Chief Minister":
                     # Get the old channel ID if it exists
                     svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (self.context,))
                     old_channel_row = svs_cursor.fetchone()
@@ -98,7 +98,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
             # Trigger message update in the new channel
             if self.context.endswith("channel"):
                 activity_name = self.context.replace(" channel", "")
-                if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
+                if activity_name == "Chief Minister":
                     minister_menu_cog = self.bot.get_cog("MinisterMenu")
                     if minister_menu_cog:
                         await minister_menu_cog.update_channel_message(activity_name)
@@ -114,9 +114,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
                         f"Configure channels for minister scheduling:\n\n"
                         f"**Channel Types**\n"
                         f"{theme.upperDivider}\n"
-                        f"{theme.settingsIcon} **Construction Channel** - Shows available Construction Day slots\n"
-                        f"{theme.searchIcon} **Research Channel** - Shows available Research Day slots\n"
-                        f"{theme.allianceIcon} **Training Channel** - Shows available Training Day slots\n"
+                        f"{theme.settingsIcon} **Chief Minister Channel** - Shows available Chief Minister slots\n"
                         f"{theme.documentIcon} **Log Channel** - Receives add/remove notifications\n"
                         f"{theme.lowerDivider}\n\n"
                         f"Select a channel type to configure:"
@@ -213,6 +211,82 @@ class MinisterSchedule(commands.Cog):
         """)
 
         self.svs_conn.commit()
+        self._migrate_legacy_appointment_types()
+
+    def _migrate_legacy_appointment_types(self):
+        """One-time migration: the bot used to track three independent minister
+        types (Construction/Research/Troops Training Day), but the game only has
+        one Chief Minister seat, so these are now a single merged schedule.
+        Idempotent -- a checked-for legacy row/channel is what gates a re-run.
+        """
+        LEGACY_TYPES = ("Construction Day", "Research Day", "Troops Training Day")
+
+        legacy_rows = self.svs_cursor.execute(
+            "SELECT COUNT(*) FROM appointments WHERE appointment_type IN (?, ?, ?)", LEGACY_TYPES
+        ).fetchone()[0]
+        legacy_channels = self.svs_cursor.execute(
+            "SELECT COUNT(*) FROM reference WHERE context IN (?, ?, ?)",
+            tuple(f"{t} channel" for t in LEGACY_TYPES)
+        ).fetchone()[0]
+        if not legacy_rows and not legacy_channels:
+            return  # nothing to migrate
+
+        try:
+            # (appointment_type, time) is uniquely indexed, so two legacy rows
+            # at the same time (e.g. Construction Day 10:00 and Research Day
+            # 10:00) would collide once both become "Chief Minister". Keep the
+            # earliest by id, drop the rest -- rare, but must not crash the merge.
+            rows = self.svs_cursor.execute(
+                "SELECT id, time FROM appointments WHERE appointment_type IN (?, ?, ?) ORDER BY time, id",
+                LEGACY_TYPES
+            ).fetchall()
+            seen_times = set()
+            for row_id, time_slot in rows:
+                if time_slot in seen_times:
+                    logger.warning(
+                        f"Dropping appointment id={row_id} at {time_slot}: collides with another "
+                        f"legacy-type booking at the same time during the Chief Minister merge"
+                    )
+                    self.svs_cursor.execute("DELETE FROM appointments WHERE id=?", (row_id,))
+                else:
+                    seen_times.add(time_slot)
+
+            self.svs_cursor.execute(
+                "UPDATE appointments SET appointment_type='Chief Minister' WHERE appointment_type IN (?, ?, ?)",
+                LEGACY_TYPES
+            )
+
+            archive_table_exists = self.svs_cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='minister_archive_appointments'"
+            ).fetchone() is not None
+            if archive_table_exists:
+                self.svs_cursor.execute(
+                    "UPDATE minister_archive_appointments SET appointment_type='Chief Minister' "
+                    "WHERE appointment_type IN (?, ?, ?)",
+                    LEGACY_TYPES
+                )
+
+            # Consolidate channel config: keep the first configured legacy channel,
+            # and drop the per-type board-message references (they'll be recreated).
+            for legacy_type in LEGACY_TYPES:
+                row = self.svs_cursor.execute(
+                    "SELECT context_id FROM reference WHERE context=?", (f"{legacy_type} channel",)
+                ).fetchone()
+                if row:
+                    self.svs_cursor.execute(
+                        "INSERT INTO reference (context, context_id) VALUES ('Chief Minister channel', ?) "
+                        "ON CONFLICT(context) DO NOTHING",
+                        (row[0],)
+                    )
+                self.svs_cursor.execute("DELETE FROM reference WHERE context=?", (f"{legacy_type} channel",))
+                self.svs_cursor.execute("DELETE FROM reference WHERE context=?", (legacy_type,))
+
+            self.svs_conn.commit()
+            logger.info("Migrated legacy Construction/Research/Troops Training Day minister types to a single Chief Minister schedule")
+        except sqlite3.Error as e:
+            self.svs_conn.rollback()
+            logger.error(f"Failed to migrate legacy minister appointment types: {e}")
+            raise
 
     def _migrate_appointments_table(self):
         """One-time rebuild of `appointments` to add a surrogate id PK and a
@@ -293,7 +367,7 @@ class MinisterSchedule(commands.Cog):
         Args:
             action_type: Type of action (add, remove, reschedule, clear_all, time_slot_mode_change, archive_created)
             user: Discord user object who made the change
-            appointment_type: Type of appointment (Construction Day, Research Day, etc.)
+            appointment_type: Always "Chief Minister" now (single merged schedule)
             fid: User FID
             nickname: User nickname
             old_time: Previous time slot (for reschedule)
@@ -364,36 +438,10 @@ class MinisterSchedule(commands.Cog):
 
         return time_slots
 
-    # Autocomplete handler for appointment type
-    async def appointment_autocomplete(self, interaction: discord.Interaction, current: str):
-        try:
-            choices = [
-                discord.app_commands.Choice(name="Construction Day", value="Construction Day"),
-                discord.app_commands.Choice(name="Research Day", value="Research Day"),
-                discord.app_commands.Choice(name="Troops Training Day", value="Troops Training Day")
-            ]
-            if current:
-                filtered_choices = [choice for choice in choices if current.lower() in choice.name.lower()]
-            else:
-                filtered_choices = choices
-
-            return filtered_choices
-        except Exception as e:
-            logger.error(f"Error in appointment type autocomplete: {e}")
-            print(f"Error in appointment type autocomplete: {e}")
-            return []
-
     # Autocomplete handler for names
     async def fid_autocomplete(self, interaction: discord.Interaction, current: str):
         try:
-            # Fetch selected appointment type from interaction
-            appointment_type = next(
-                (option["value"] for option in interaction.data.get("options", []) if option["name"] == "appointment_type"),
-                None
-            )
-
-            if not appointment_type:
-                return []  # If no appointment type is selected, return an empty list
+            appointment_type = "Chief Minister"
 
             # Fetch all registered users
             self.users_cursor.execute("SELECT fid, nickname FROM users")
@@ -424,14 +472,7 @@ class MinisterSchedule(commands.Cog):
     # Autocomplete handler for registered names
     async def registered_fid_autocomplete(self, interaction: discord.Interaction, current: str):
         try:
-            # Fetch selected appointment type from interaction
-            appointment_type = next(
-                (option["value"] for option in interaction.data.get("options", []) if option["name"] == "appointment_type"),
-                None
-            )
-
-            if not appointment_type:
-                return []
+            appointment_type = "Chief Minister"
 
             # Fetch users already booked for the selected appointment type
             self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type = ?", (appointment_type,))
@@ -466,13 +507,7 @@ class MinisterSchedule(commands.Cog):
     # Autocomplete handler for time
     async def time_autocomplete(self, interaction: discord.Interaction, current: str):
         try:
-            appointment_type = next(
-                (option["value"] for option in interaction.data.get("options", []) if option["name"] == "appointment_type"),
-                None
-            )
-
-            if not appointment_type:
-                return []
+            appointment_type = "Chief Minister"
 
             # Get current slot mode
             self.svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", ("slot_mode",))
@@ -728,10 +763,11 @@ class MinisterSchedule(commands.Cog):
             else:
                 return None
 
-    @discord.app_commands.command(name='minister_add', description='Book an appointment slot for a user.')
+    @discord.app_commands.command(name='minister_add', description='Book a Chief Minister slot for a user.')
     @app_commands.rename(fid='id')
-    @app_commands.autocomplete(appointment_type=appointment_autocomplete, fid=fid_autocomplete, time=time_autocomplete)
-    async def minister_add(self, interaction: discord.Interaction, appointment_type: str, fid: str, time: str):
+    @app_commands.autocomplete(fid=fid_autocomplete, time=time_autocomplete)
+    async def minister_add(self, interaction: discord.Interaction, fid: str, time: str):
+        appointment_type = "Chief Minister"
         if not await self.is_admin(interaction.user.id):
             await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
             return
@@ -920,10 +956,11 @@ class MinisterSchedule(commands.Cog):
             print(f"An unexpected error occurred: {e}")
             await interaction.followup.send(f"An unexpected error occurred while processing the request: {e}")
 
-    @discord.app_commands.command(name='minister_remove', description='Cancel an appointment slot for a user.')
+    @discord.app_commands.command(name='minister_remove', description='Cancel a Chief Minister slot for a user.')
     @app_commands.rename(fid='id')
-    @app_commands.autocomplete(appointment_type=appointment_autocomplete, fid=registered_fid_autocomplete)
-    async def minister_remove(self, interaction: discord.Interaction, appointment_type: str, fid: str):
+    @app_commands.autocomplete(fid=registered_fid_autocomplete)
+    async def minister_remove(self, interaction: discord.Interaction, fid: str):
+        appointment_type = "Chief Minister"
         if not await self.is_admin(interaction.user.id):
             await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
             return
@@ -1056,9 +1093,9 @@ class MinisterSchedule(commands.Cog):
             print(f"An error occurred: {e}")
             await interaction.followup.send(f"An error occurred while canceling the slot: {e}")
 
-    @discord.app_commands.command(name='minister_clear_all', description='Cancel all appointments for a selected appointment type.')
-    @app_commands.autocomplete(appointment_type=appointment_autocomplete)
-    async def minister_clear_all(self, interaction: discord.Interaction, appointment_type: str):
+    @discord.app_commands.command(name='minister_clear_all', description='Cancel all Chief Minister appointments.')
+    async def minister_clear_all(self, interaction: discord.Interaction):
+        appointment_type = "Chief Minister"
         if not await self.is_admin(interaction.user.id):
             await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
             return
@@ -1171,13 +1208,13 @@ class MinisterSchedule(commands.Cog):
             print(f"An error occurred: {e}")
             await interaction.followup.send(f"An error occurred while clearing the appointments: {e}", ephemeral=True)
         
-    @discord.app_commands.command(name='minister_list', description='View the schedule for an appointment type.')
-    @app_commands.autocomplete(appointment_type=appointment_autocomplete, all_or_available=choice_autocomplete)
+    @discord.app_commands.command(name='minister_list', description='View the Chief Minister schedule.')
+    @app_commands.autocomplete(all_or_available=choice_autocomplete)
     @app_commands.describe(
-        appointment_type="The type of minister appointment to view.",
         all_or_available="Show full schedule or only available slots.",
     )
-    async def minister_list(self, interaction: discord.Interaction, appointment_type: str, all_or_available: str):
+    async def minister_list(self, interaction: discord.Interaction, all_or_available: str):
+        appointment_type = "Chief Minister"
         try:
             await interaction.response.defer()
 
@@ -1295,15 +1332,13 @@ class MinisterSchedule(commands.Cog):
     @discord.app_commands.command(name='minister_archive_history', description='View change history for minister appointments (Global Admin only)')
     @app_commands.describe(
         archive_id="Optional: Select an archive to view its change history (leave empty for current changes)",
-        appointment_type="Optional: Filter by appointment type (Construction/Research/Training Day)",
         discord_user="Optional: Filter by specific Discord user who made changes"
     )
-    @app_commands.autocomplete(archive_id=archive_id_autocomplete, appointment_type=appointment_autocomplete)
+    @app_commands.autocomplete(archive_id=archive_id_autocomplete)
     async def minister_archive_history(
         self,
         interaction: discord.Interaction,
         archive_id: int = None,
-        appointment_type: str = None,
         discord_user: discord.User = None
     ):
         # Check if user is global admin
@@ -1338,10 +1373,6 @@ class MinisterSchedule(commands.Cog):
             params.append(archive_id)
         else:
             query += " AND archive_id IS NULL"
-
-        if appointment_type:
-            query += " AND appointment_type = ?"
-            params.append(appointment_type)
 
         if discord_user:
             query += " AND discord_user_id = ?"

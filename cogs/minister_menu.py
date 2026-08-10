@@ -386,33 +386,6 @@ class ClearConfirmationView(discord.ui.View):
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.show_filtered_user_select(interaction, self.activity_name)
 
-class ActivitySelectView(discord.ui.View):
-    def __init__(self, bot, cog, action_type):
-        super().__init__(timeout=7200)
-        self.bot = bot
-        self.cog = cog
-        self.action_type = action_type  # "update_names" or "clear_reservations"
-    
-    @discord.ui.select(
-        placeholder="Select an activity day...",
-        options=[
-            discord.SelectOption(label="Construction Day", value="Construction Day", emoji=theme.constructionIcon),
-            discord.SelectOption(label="Research Day", value="Research Day", emoji=theme.researchIcon),
-            discord.SelectOption(label="Troops Training Day", value="Troops Training Day", emoji=theme.trainingIcon)
-        ]
-    )
-    async def activity_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        activity_name = select.values[0]
-        
-        if self.action_type == "update_names":
-            await self.cog.update_minister_names(interaction, activity_name)
-        elif self.action_type == "clear_reservations":
-            await self.cog.show_clear_confirmation(interaction, activity_name)
-    
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.primary, emoji=f"{theme.backIcon}")
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_settings_menu(interaction)
-
 class MinisterSettingsView(discord.ui.View):
     def __init__(self, bot, cog, is_global: bool = False):
         super().__init__(timeout=None)
@@ -513,17 +486,9 @@ class MinisterChannelView(discord.ui.View):
                 ]:
                     child.disabled = True
 
-    @discord.ui.button(label="Construction Day", style=discord.ButtonStyle.primary, emoji=f"{theme.constructionIcon}")
-    async def construction_day(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_activity_selection(interaction, "Construction Day")
-
-    @discord.ui.button(label="Research Day", style=discord.ButtonStyle.primary, emoji=f"{theme.researchIcon}")
-    async def research_day(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_activity_selection(interaction, "Research Day")
-
-    @discord.ui.button(label="Troops Training Day", style=discord.ButtonStyle.primary, emoji=f"{theme.trainingIcon}")
-    async def troops_training_day(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_activity_selection(interaction, "Troops Training Day")
+    @discord.ui.button(label="Chief Minister", style=discord.ButtonStyle.primary, emoji=f"{theme.crownIcon}")
+    async def chief_minister(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_activity_selection(interaction, "Chief Minister")
 
     @discord.ui.button(label="Channel Setup", style=discord.ButtonStyle.success, emoji=f"{theme.editListIcon}", row=1)
     async def channel_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -623,17 +588,9 @@ class ChannelConfigurationView(discord.ui.View):
         self.bot = bot
         self.cog = cog
 
-    @discord.ui.button(label="Construction Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.constructionIcon}")
-    async def construction_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_channel_selection(interaction, "Construction Day channel", "Construction Day")
-
-    @discord.ui.button(label="Research Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.researchIcon}")
-    async def research_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_channel_selection(interaction, "Research Day channel", "Research Day")
-
-    @discord.ui.button(label="Training Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.trainingIcon}")
-    async def training_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_channel_selection(interaction, "Troops Training Day channel", "Troops Training Day")
+    @discord.ui.button(label="Chief Minister Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.crownIcon}")
+    async def chief_minister_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_channel_selection(interaction, "Chief Minister channel", "Chief Minister")
 
     @discord.ui.button(label="Log Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.documentIcon}")
     async def log_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -671,12 +628,8 @@ class ChannelConfigurationView(discord.ui.View):
                         f"Configure channels for minister scheduling:\n\n"
                         f"Channel Types\n"
                         f"{theme.upperDivider}\n\n"
-                        f"{theme.constructionIcon} **Construction Channel**\n"
-                        f"└ Shows available Construction Day slots\n\n"
-                        f"{theme.researchIcon} **Research Channel**\n"
-                        f"└ Shows available Research Day slots\n\n"
-                        f"{theme.trainingIcon} **Training Channel**\n"
-                        f"└ Shows available Training Day slots\n\n"
+                        f"{theme.crownIcon} **Chief Minister Channel**\n"
+                        f"└ Shows available Chief Minister slots\n\n"
                         f"{theme.listIcon} **Log Channel**\n"
                         f"└ Receives add/remove notifications\n\n"
                         f"{theme.lowerDivider}\n\n"
@@ -868,12 +821,8 @@ class MinisterMenu(commands.Cog):
                 f"{theme.middleDivider}\n\n"
                 f"**Available Operations**\n"
                 f"{theme.middleDivider}\n"
-                f"{theme.constructionIcon} **Construction Day**\n"
-                f"└ Manage Construction Day appointments\n\n"
-                f"{theme.researchIcon} **Research Day**\n"
-                f"└ Manage Research Day appointments\n\n"
-                f"{theme.trainingIcon} **Training Day**\n"
-                f"└ Manage Troops Training Day appointments\n\n"
+                f"{theme.crownIcon} **Chief Minister**\n"
+                f"└ Manage Chief Minister appointments\n\n"
                 f"{theme.editListIcon} **Channel Setup**\n"
                 f"└ Configure channels for appointments and logging\n\n"
                 f"{theme.archiveIcon} **Event Archive**\n"
@@ -897,12 +846,8 @@ class MinisterMenu(commands.Cog):
                 f"Configure channels for minister scheduling:\n\n"
                 f"Channel Types\n"
                 f"{theme.upperDivider}\n\n"
-                f"{theme.constructionIcon} **Construction Channel**\n"
-                f"└ Shows available Construction Day slots\n\n"
-                f"{theme.researchIcon} **Research Channel**\n"
-                f"└ Shows available Research Day slots\n\n"
-                f"{theme.trainingIcon} **Training Channel**\n"
-                f"└ Shows available Training Day slots\n\n"
+                f"{theme.crownIcon} **Chief Minister Channel**\n"
+                f"└ Shows available Chief Minister slots\n\n"
                 f"{theme.listIcon} **Log Channel**\n"
                 f"└ Receives all change notifications\n\n"
                 f"{theme.lowerDivider}\n\n"
@@ -931,9 +876,7 @@ class MinisterMenu(commands.Cog):
 
         # Define channels to check
         channels_config = [
-            ("Construction Day channel", f"{theme.constructionIcon} Construction"),
-            ("Research Day channel", f"{theme.researchIcon} Research"),
-            ("Troops Training Day channel", f"{theme.trainingIcon} Training"),
+            ("Chief Minister channel", f"{theme.crownIcon} Chief Minister"),
             ("minister log channel", f"{theme.listIcon} Log Channel")
         ]
 
@@ -1484,14 +1427,12 @@ class MinisterMenu(commands.Cog):
             @discord.ui.select(
                 placeholder="Select channels to clear...",
                 options=[
-                    discord.SelectOption(label="Construction Channel", value="Construction Day", emoji=theme.constructionIcon),
-                    discord.SelectOption(label="Research Channel", value="Research Day", emoji=theme.researchIcon),
-                    discord.SelectOption(label="Training Channel", value="Troops Training Day", emoji=theme.trainingIcon),
+                    discord.SelectOption(label="Chief Minister Channel", value="Chief Minister", emoji=theme.crownIcon),
                     discord.SelectOption(label="Log Channel", value="minister log", emoji=theme.documentIcon),
                     discord.SelectOption(label="All Channels", value="ALL", emoji=theme.trashIcon, description="Clear all channel configurations")
                 ],
                 min_values=1,
-                max_values=5
+                max_values=3
             )
             async def select_channels(self, interaction: discord.Interaction, select: discord.ui.Select):
                 try:
@@ -1503,10 +1444,9 @@ class MinisterMenu(commands.Cog):
 
                         for value in select.values:
                             if value == "ALL":
-                                # Clear all minister channels
-                                for activity in ["Construction Day", "Research Day", "Troops Training Day"]:
-                                    await self._clear_channel_config(svs_cursor, activity, interaction.guild)
-                                    cleared_channels.append(f"{activity} channel")
+                                # Clear the minister channel
+                                await self._clear_channel_config(svs_cursor, "Chief Minister", interaction.guild)
+                                cleared_channels.append("Chief Minister channel")
 
                                 # Clear log channel
                                 svs_cursor.execute("DELETE FROM reference WHERE context=?", ("minister log channel",))
@@ -1629,18 +1569,11 @@ class MinisterMenu(commands.Cog):
         await safe_edit_message(interaction, embed=embed, view=view, content=None)
 
     async def show_activity_selection_for_update(self, interaction: discord.Interaction):
-        """Show activity selection for updating names"""
-        embed = discord.Embed(
-            title=f"{theme.editListIcon} Update Names",
-            description="Select which activity day you want to update names for:",
-            color=theme.emColor1
-        )
-        
-        view = ActivitySelectView(self.bot, self, "update_names")
-        await safe_edit_message(interaction, embed=embed, view=view)
+        """Update names for the Chief Minister schedule (only one activity now, so no selector needed)."""
+        await self.update_minister_names(interaction, "Chief Minister")
 
     async def show_activity_selection_for_clear(self, interaction: discord.Interaction):
-        """Show activity selection for clearing reservations"""
+        """Clear reservations for the Chief Minister schedule (only one activity now, so no selector needed)."""
 
         minister_schedule_cog = self.bot.get_cog("MinisterSchedule")
         if not minister_schedule_cog:
@@ -1663,14 +1596,7 @@ class MinisterMenu(commands.Cog):
                 f"[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title=f"{theme.calendarIcon} Delete All Reservations",
-            description="Select which activity day you want to clear reservations for:",
-            color=theme.emColor2
-        )
-        
-        view = ActivitySelectView(self.bot, self, "clear_reservations")
-        await safe_edit_message(interaction, embed=embed, view=view)
+        await self.show_clear_confirmation(interaction, "Chief Minister")
 
     async def show_time_slot_mode_menu(self, interaction: discord.Interaction):
         """Show time slot mode selection menu"""
@@ -1809,9 +1735,8 @@ class MinisterMenu(commands.Cog):
                     additional_data=additional_data
                 )
 
-                # Update all channel messages
-                for activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
-                    await self.update_channel_message(activity_name)
+                # Update the channel message
+                await self.update_channel_message("Chief Minister")
 
             # Show success
             mode_labels = {0: "Standard", 1: "Offset"}

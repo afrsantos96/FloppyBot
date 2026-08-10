@@ -117,18 +117,18 @@ def test_complete_booking_detects_conflict_with_manual_name_slot():
     svs, users, alliance = _dbs()
     svs.execute(
         "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest Governor', 'Construction Day', '09:00', NULL)"
+        "VALUES (NULL, 'Guest Governor', 'Chief Minister', '09:00', NULL)"
     )
     svs.commit()
     cog = _mk_menu_cog(svs, users, alliance)
     inter = _interaction()
 
-    asyncio.run(cog.complete_booking(inter, "Construction Day", "1", "09:00"))
+    asyncio.run(cog.complete_booking(inter, "Chief Minister", "1", "09:00"))
 
     assert cog._last_message[1] is True, "must report a conflict, not silently overwrite the manual-name slot"
     assert "Guest Governor" in cog._last_message[0]
     # The manual-name row must still be there -- fid 1 must not have been inserted.
     row = svs.execute(
-        "SELECT fid, manual_name FROM appointments WHERE appointment_type='Construction Day' AND time='09:00'"
+        "SELECT fid, manual_name FROM appointments WHERE appointment_type='Chief Minister' AND time='09:00'"
     ).fetchone()
     assert row == (None, "Guest Governor")

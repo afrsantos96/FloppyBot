@@ -20,17 +20,9 @@ class ArchiveDetailsView(discord.ui.View):
         self.archive_info = archive_info
         self.type_counts = type_counts  # List of (appointment_type, count) tuples
 
-    @discord.ui.button(label="View Construction", style=discord.ButtonStyle.primary, emoji=f"{theme.constructionIcon}", row=0)
-    async def view_construction(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_archive_appointments(interaction, self.archive_id, "Construction Day")
-
-    @discord.ui.button(label="View Research", style=discord.ButtonStyle.primary, emoji=f"{theme.researchIcon}", row=0)
-    async def view_research(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_archive_appointments(interaction, self.archive_id, "Research Day")
-
-    @discord.ui.button(label="View Training", style=discord.ButtonStyle.primary, emoji=f"{theme.trainingIcon}", row=0)
-    async def view_training(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.show_archive_appointments(interaction, self.archive_id, "Troops Training Day")
+    @discord.ui.button(label="View Chief Minister", style=discord.ButtonStyle.primary, emoji=f"{theme.crownIcon}", row=0)
+    async def view_chief_minister(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.show_archive_appointments(interaction, self.archive_id, "Chief Minister")
 
     @discord.ui.button(label="View Change History", style=discord.ButtonStyle.secondary, emoji=f"{theme.documentIcon}", row=1)
     async def view_history(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -620,7 +612,7 @@ class MinisterArchive(commands.Cog):
                     f"**Created By:** {created_by_name}\n\n"
                     f"{theme.middleDivider}\n\n"
                     f"**Would you like to clear all minister appointments to prepare for the next KvK?**\n\n"
-                    f"{theme.warnIcon} This will remove all current appointments across Construction, Research, and Training days."
+                    f"{theme.warnIcon} This will remove all current Chief Minister appointments."
                 ),
                 color=theme.emColor3
             )
@@ -644,15 +636,14 @@ class MinisterArchive(commands.Cog):
                 await interaction.followup.send(f"{theme.deniedIcon} Minister Schedule module not found.", ephemeral=True)
                 return
 
-            cleared_total = 0
-            for appointment_type in ["Construction Day", "Research Day", "Troops Training Day"]:
-                # Get appointments before deletion for logging
-                self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=?", (appointment_type,))
-                fids = [row[0] for row in self.svs_cursor.fetchall()]
-                cleared_total += len(fids)
+            appointment_type = "Chief Minister"
+            # Get appointments before deletion for logging
+            self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=?", (appointment_type,))
+            fids = [row[0] for row in self.svs_cursor.fetchall()]
+            cleared_total = len(fids)
 
-                # Delete appointments
-                self.svs_cursor.execute("DELETE FROM appointments WHERE appointment_type=?", (appointment_type,))
+            # Delete appointments
+            self.svs_cursor.execute("DELETE FROM appointments WHERE appointment_type=?", (appointment_type,))
 
             self.svs_conn.commit()
 
@@ -675,11 +666,10 @@ class MinisterArchive(commands.Cog):
                 additional_data=additional_data
             )
 
-            # Update all channel messages
+            # Update the channel message
             minister_menu_cog = self.bot.get_cog("MinisterMenu")
             if minister_menu_cog:
-                for activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
-                    await minister_menu_cog.update_channel_message(activity_name)
+                await minister_menu_cog.update_channel_message("Chief Minister")
 
             # Send log to minister log channel
             embed = discord.Embed(

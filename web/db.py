@@ -23,7 +23,7 @@ SVS_DB = "db/svs.sqlite"
 USERS_DB = "db/users.sqlite"
 ALLIANCE_DB = "db/alliance.sqlite"
 
-POSITIONS = ["Construction Day", "Research Day", "Troops Training Day"]
+POSITIONS = ["Chief Minister"]
 
 
 def get_time_slots(slot_mode: int):

@@ -109,7 +109,7 @@ def test_get_schedule_returns_positions_and_members(tmp_path, monkeypatch):
         return await resp.json()
 
     body = asyncio.run(_with_client(cfg, run))
-    assert body["positions"] == ["Construction Day", "Research Day", "Troops Training Day"]
+    assert body["positions"] == ["Chief Minister"]
     assert any(m["fid"] == 1 and m["nickname"] == "Alice" for m in body["members"])
 
 
@@ -122,7 +122,7 @@ def test_post_schedule_assigns_registered_member(tmp_path, monkeypatch):
         resp = await client.post(
             "/api/schedule",
             cookies=cookies,
-            json={"changes": [{"appointment_type": "Construction Day", "time": "09:00", "fid": 1}]},
+            json={"changes": [{"appointment_type": "Chief Minister", "time": "09:00", "fid": 1}]},
         )
         assert resp.status == 200
         return await resp.json()
@@ -133,7 +133,7 @@ def test_post_schedule_assigns_registered_member(tmp_path, monkeypatch):
 
     with sqlite3.connect(svs_path) as c:
         row = c.execute(
-            "SELECT fid, manual_name FROM appointments WHERE appointment_type='Construction Day' AND time='09:00'"
+            "SELECT fid, manual_name FROM appointments WHERE appointment_type='Chief Minister' AND time='09:00'"
         ).fetchone()
     assert row == (1, None)
 
@@ -147,7 +147,7 @@ def test_post_schedule_manual_name_assignment(tmp_path, monkeypatch):
         resp = await client.post(
             "/api/schedule",
             cookies=cookies,
-            json={"changes": [{"appointment_type": "Research Day", "time": "10:30", "manual_name": "Guest Governor"}]},
+            json={"changes": [{"appointment_type": "Chief Minister", "time": "10:30", "manual_name": "Guest Governor"}]},
         )
         assert resp.status == 200
         return await resp.json()
@@ -157,7 +157,7 @@ def test_post_schedule_manual_name_assignment(tmp_path, monkeypatch):
 
     with sqlite3.connect(svs_path) as c:
         row = c.execute(
-            "SELECT fid, manual_name FROM appointments WHERE appointment_type='Research Day' AND time='10:30'"
+            "SELECT fid, manual_name FROM appointments WHERE appointment_type='Chief Minister' AND time='10:30'"
         ).fetchone()
     assert row == (None, "Guest Governor")
 
@@ -171,7 +171,7 @@ def test_post_schedule_rejects_fid_outside_permission_scope(tmp_path, monkeypatc
         resp = await client.post(
             "/api/schedule",
             cookies=cookies,
-            json={"changes": [{"appointment_type": "Construction Day", "time": "09:00", "fid": 999999}]},
+            json={"changes": [{"appointment_type": "Chief Minister", "time": "09:00", "fid": 999999}]},
         )
         assert resp.status == 200
         return await resp.json()
@@ -190,21 +190,21 @@ def test_clear_does_not_touch_a_different_slot_for_the_same_fid(tmp_path, monkey
     with sqlite3.connect(svs_path) as c:
         c.execute(
             "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-            "VALUES (1, NULL, 'Construction Day', '09:00', 5)"
+            "VALUES (1, NULL, 'Chief Minister', '09:00', 5)"
         )
         c.execute(
             "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-            "VALUES (NULL, 'Guest', 'Construction Day', '10:00', NULL)"
+            "VALUES (NULL, 'Guest', 'Chief Minister', '10:00', NULL)"
         )
         c.commit()
 
     result = db.apply_schedule_changes(
-        [{"appointment_type": "Construction Day", "time": "10:00", "clear": True, "fid": 1}],
+        [{"appointment_type": "Chief Minister", "time": "10:00", "clear": True, "fid": 1}],
         discord_user_id=1001,
         guild_id=999,
     )
 
     assert result["applied"][0]["action"] == "remove"
     with sqlite3.connect(svs_path) as c:
-        rows = c.execute("SELECT fid, time FROM appointments WHERE appointment_type='Construction Day'").fetchall()
+        rows = c.execute("SELECT fid, time FROM appointments WHERE appointment_type='Chief Minister'").fetchall()
     assert rows == [(1, "09:00")], "fid 1's own 09:00 booking must survive a clear targeted at 10:00"
