@@ -604,13 +604,67 @@ class MinisterMenu(commands.Cog):
             ephemeral=True
         )
 
+    def _fetch_booking_lines(self, activity_name: str):
+        """Returns (bookings, booking_lines) -- the same 'who's booked when'
+        format used by both the List command and the post-portal-save board
+        update, so the two always show the same thing."""
+        self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=? ORDER BY time", (activity_name,))
+        bookings = self.svs_cursor.fetchall()
+
+        booking_lines = []
+        for time, fid, manual_name, alliance_id in bookings:
+            if fid:
+                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
+                user_result = self.users_cursor.fetchone()
+                nickname = user_result[0] if user_result else f"Unknown ({fid})"
+
+                self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                alliance_result = self.alliance_cursor.fetchone()
+                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+
+                booking_lines.append(f"`{time}` - [{alliance_name}] {nickname} ({fid})")
+            else:
+                booking_lines.append(f"`{time}` - {manual_name}")
+
+        return bookings, booking_lines
+
+    async def update_channel_message_as_booking_list(self, activity_name: str):
+        """Update the channel board with the current bookings (same format as
+        the List command), instead of the list-type-setting-dependent slot
+        list update_channel_message produces. Used after a portal save."""
+        try:
+            minister_schedule_cog = self.bot.get_cog("MinisterSchedule")
+            if not minister_schedule_cog:
+                return
+
+            bookings, booking_lines = self._fetch_booking_lines(activity_name)
+            if not bookings:
+                message_content = f"**{activity_name} Schedule**\nNo appointments currently booked."
+            else:
+                message_content = (
+                    f"**{activity_name} Schedule**\n" + "\n".join(booking_lines) +
+                    f"\n\nTotal bookings: {len(bookings)}/48"
+                )
+
+            context = f"{activity_name}"
+            channel_context = f"{activity_name} channel"
+
+            channel_id = await minister_schedule_cog.get_channel_id(channel_context)
+            if channel_id:
+                log_guild = await minister_schedule_cog.get_log_guild(None)
+                if log_guild:
+                    channel = log_guild.get_channel(channel_id)
+                    if channel:
+                        await minister_schedule_cog.get_or_create_message(context, message_content, channel)
+
+        except Exception as e:
+            print(f"Error updating channel message: {e}")
+
     async def show_current_schedule_list(self, interaction: discord.Interaction, activity_name: str):
         """Show a paginated list of current bookings"""
         await interaction.response.defer()
 
-        # Get bookings
-        self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=? ORDER BY time", (activity_name,))
-        bookings = self.svs_cursor.fetchall()
+        bookings, booking_lines = self._fetch_booking_lines(activity_name)
 
         if not bookings:
             embed = discord.Embed(
@@ -620,24 +674,6 @@ class MinisterMenu(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
             return
-
-        # Build booking list with user info
-        booking_lines = []
-        for time, fid, manual_name, alliance_id in bookings:
-            if fid:
-                # Get user info
-                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
-                user_result = self.users_cursor.fetchone()
-                nickname = user_result[0] if user_result else f"Unknown ({fid})"
-
-                # Get alliance info
-                self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-                alliance_result = self.alliance_cursor.fetchone()
-                alliance_name = alliance_result[0] if alliance_result else "Unknown"
-
-                booking_lines.append(f"`{time}` - [{alliance_name}] {nickname} ({fid})")
-            else:
-                booking_lines.append(f"`{time}` - {manual_name}")
 
         # Create embed with all bookings
         embed = discord.Embed(

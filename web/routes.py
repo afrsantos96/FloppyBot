@@ -165,7 +165,7 @@ async def api_save_schedule(request: web.Request) -> web.Response:
     if minister_menu_cog:
         for appointment_type in result["touched_types"]:
             try:
-                await minister_menu_cog.update_channel_message(appointment_type)
+                await minister_menu_cog.update_channel_message_as_booking_list(appointment_type)
             except Exception:
                 logger.exception(f"Failed to refresh the Discord board for {appointment_type}")
     else:
