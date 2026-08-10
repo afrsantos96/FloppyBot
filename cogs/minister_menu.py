@@ -313,7 +313,15 @@ class MinisterChannelView(discord.ui.View):
     async def list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.show_current_schedule_list(interaction, "Chief Minister")
 
-    @discord.ui.button(label="Main Menu", style=discord.ButtonStyle.secondary, emoji=f"{theme.homeIcon}", row=1)
+    @discord.ui.button(label="Auto Schedule", style=discord.ButtonStyle.success, emoji=f"{theme.robotIcon}", row=1)
+    async def auto_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        auto_schedule_cog = self.bot.get_cog("AutoSchedule")
+        if not auto_schedule_cog:
+            await interaction.response.send_message(f"{theme.deniedIcon} Auto Schedule module not found.", ephemeral=True)
+            return
+        await auto_schedule_cog.show_auto_schedule_menu(interaction)
+
+    @discord.ui.button(label="Main Menu", style=discord.ButtonStyle.secondary, emoji=f"{theme.homeIcon}", row=2)
     async def main_menu_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             main_menu_cog = self.cog.bot.get_cog("MainMenu")
@@ -339,6 +347,10 @@ class ChannelConfigurationView(discord.ui.View):
     @discord.ui.button(label="Chief Minister Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.crownIcon}")
     async def chief_minister_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_channel_selection(interaction, "Chief Minister channel", "Chief Minister")
+
+    @discord.ui.button(label="Auto Schedule Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.robotIcon}")
+    async def auto_schedule_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_channel_selection(interaction, "Auto Schedule channel", "Auto Schedule")
 
     @discord.ui.button(label="Log Channel", style=discord.ButtonStyle.secondary, emoji=f"{theme.documentIcon}")
     async def log_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -377,7 +389,9 @@ class ChannelConfigurationView(discord.ui.View):
                         f"Channel Types\n"
                         f"{theme.upperDivider}\n\n"
                         f"{theme.crownIcon} **Chief Minister Channel**\n"
-                        f"└ Shows available Chief Minister slots\n\n"
+                        f"└ Shows the Chief Minister schedule\n\n"
+                        f"{theme.robotIcon} **Auto Schedule Channel**\n"
+                        f"└ Where governors post requests and the AI-generated schedule is shown\n\n"
                         f"{theme.listIcon} **Log Channel**\n"
                         f"└ Receives add/remove notifications\n\n"
                         f"{theme.lowerDivider}\n\n"
@@ -477,7 +491,9 @@ class MinisterMenu(commands.Cog):
                 f"Channel Types\n"
                 f"{theme.upperDivider}\n\n"
                 f"{theme.crownIcon} **Chief Minister Channel**\n"
-                f"└ Shows available Chief Minister slots\n\n"
+                f"└ Shows the Chief Minister schedule\n\n"
+                f"{theme.robotIcon} **Auto Schedule Channel**\n"
+                f"└ Where governors post requests and the AI-generated schedule is shown\n\n"
                 f"{theme.listIcon} **Log Channel**\n"
                 f"└ Receives all change notifications\n\n"
                 f"{theme.lowerDivider}\n\n"
@@ -790,25 +806,29 @@ class MinisterMenu(commands.Cog):
                 placeholder="Select channels to clear...",
                 options=[
                     discord.SelectOption(label="Chief Minister Channel", value="Chief Minister", emoji=theme.crownIcon),
+                    discord.SelectOption(label="Auto Schedule Channel", value="Auto Schedule", emoji=theme.robotIcon),
                     discord.SelectOption(label="Log Channel", value="minister log", emoji=theme.documentIcon),
                     discord.SelectOption(label="All Channels", value="ALL", emoji=theme.trashIcon, description="Clear all channel configurations")
                 ],
                 min_values=1,
-                max_values=3
+                max_values=4
             )
             async def select_channels(self, interaction: discord.Interaction, select: discord.ui.Select):
                 try:
                     await interaction.response.defer()
-                    
+
                     cleared_channels = []
                     with closing(sqlite3.connect("db/svs.sqlite")) as svs_conn:
                         svs_cursor = svs_conn.cursor()
 
                         for value in select.values:
                             if value == "ALL":
-                                # Clear the minister channel
+                                # Clear the minister channels
                                 await self._clear_channel_config(svs_cursor, "Chief Minister", interaction.guild)
                                 cleared_channels.append("Chief Minister channel")
+
+                                await self._clear_channel_config(svs_cursor, "Auto Schedule", interaction.guild)
+                                cleared_channels.append("Auto Schedule channel")
 
                                 # Clear log channel
                                 svs_cursor.execute("DELETE FROM reference WHERE context=?", ("minister log channel",))

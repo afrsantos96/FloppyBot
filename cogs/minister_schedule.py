@@ -54,8 +54,8 @@ class ChannelSelect(discord.ui.ChannelSelect):
                 # Get the activity name from the context (e.g., "Chief Minister channel" -> "Chief Minister")
                 activity_name = self.context.replace(" channel", "")
 
-                # Check if this is the minister activity channel
-                if activity_name == "Chief Minister":
+                # Check if this is a minister activity channel (Chief Minister or Auto Schedule)
+                if activity_name in ("Chief Minister", "Auto Schedule"):
                     # Get the old channel ID if it exists
                     svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (self.context,))
                     old_channel_row = svs_cursor.fetchone()
@@ -97,6 +97,10 @@ class ChannelSelect(discord.ui.ChannelSelect):
                     minister_menu_cog = self.bot.get_cog("MinisterMenu")
                     if minister_menu_cog:
                         await minister_menu_cog.update_channel_message(activity_name)
+                elif activity_name == "Auto Schedule":
+                    minister_menu_cog = self.bot.get_cog("MinisterMenu")
+                    if minister_menu_cog:
+                        await minister_menu_cog.update_channel_message_as_booking_list(activity_name)
 
             # Check if this is being called from the minister menu system
             minister_menu_cog = self.bot.get_cog("MinisterMenu")
@@ -109,7 +113,8 @@ class ChannelSelect(discord.ui.ChannelSelect):
                         f"Configure channels for minister scheduling:\n\n"
                         f"**Channel Types**\n"
                         f"{theme.upperDivider}\n"
-                        f"{theme.settingsIcon} **Chief Minister Channel** - Shows available Chief Minister slots\n"
+                        f"{theme.settingsIcon} **Chief Minister Channel** - Shows the Chief Minister schedule\n"
+                        f"{theme.robotIcon} **Auto Schedule Channel** - Where governors post requests and the AI-generated schedule is shown\n"
                         f"{theme.documentIcon} **Log Channel** - Receives add/remove notifications\n"
                         f"{theme.lowerDivider}\n\n"
                         f"Select a channel type to configure:"

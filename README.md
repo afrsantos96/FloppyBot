@@ -20,3 +20,13 @@ The "Online Manage Portal" button under Minister Scheduling opens a small web pa
 | `PORTAL_SIGNING_SECRET` | yes | Random secret used to sign portal links/sessions. Generate one with `openssl rand -hex 32` and keep it stable across restarts. |
 
 The portal binds to `127.0.0.1` in the provided `docker-compose.yml` — put a reverse proxy (nginx, Caddy, etc.) in front to terminate TLS on your domain and forward to it. If `PORTAL_BASE_URL`/`PORTAL_SIGNING_SECRET` aren't set, the portal simply doesn't start; every other bot feature works normally.
+
+## 🤖 Auto Schedule (optional)
+
+A separate schedule from Chief Minister, filled automatically: governors post free-text requests (in any language/format) in a configured channel, and the "Generate Schedule" button reads all of them, uses Google's Gemini API to extract each person's name/speedup amount/preferred time, then deterministically assigns everyone exactly one of the 48 daily slots (highest speedup amount gets first pick on contested slots).
+
+| Variable | Required | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | yes, for this feature only | A free API key from [Google AI Studio](https://aistudio.google.com/apikey). Without it, every other bot feature (including the Chief Minister schedule and the web portal) still works normally — only Generate Schedule will show an error until it's set. |
+
+This is unrelated to a Claude subscription — Claude Pro doesn't grant API access, so this feature uses Gemini's free tier instead.

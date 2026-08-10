@@ -18,3 +18,4 @@ arabic-reshaper>=3.0.0
 python-bidi==0.6.7
 pillow>=10.4.0
 numpy>=2.4.0
+google-genai>=1.0.0
