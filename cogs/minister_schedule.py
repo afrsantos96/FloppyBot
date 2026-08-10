@@ -188,6 +188,7 @@ class MinisterSchedule(commands.Cog):
                         PRIMARY KEY (fid, appointment_type)
                     );
                 """)
+        self._migrate_appointments_table()
         self.svs_cursor.execute("""
                     CREATE TABLE IF NOT EXISTS reference (
                         context TEXT PRIMARY KEY,
@@ -202,8 +203,59 @@ class MinisterSchedule(commands.Cog):
             INSERT OR IGNORE INTO reference (context, context_id)
             VALUES ('slot_mode', 0);
         """)
+        self.svs_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS portal_tokens (
+                jti TEXT PRIMARY KEY,
+                discord_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                consumed_at TEXT
+            );
+        """)
 
         self.svs_conn.commit()
+
+    def _migrate_appointments_table(self):
+        """One-time rebuild of `appointments` to add a surrogate id PK and a
+        nullable manual_name column (for portal-assigned slots that have no
+        registered fid). sqlite can't ALTER a PRIMARY KEY, so this rebuilds
+        the table the first time it's missing the `id` column.
+        """
+        cols = [row[1] for row in self.svs_cursor.execute("PRAGMA table_info(appointments)").fetchall()]
+        if "id" in cols:
+            return  # already migrated
+
+        try:
+            self.svs_cursor.execute("""
+                CREATE TABLE appointments_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fid INTEGER,
+                    manual_name TEXT,
+                    appointment_type TEXT NOT NULL,
+                    time TEXT NOT NULL,
+                    alliance INTEGER
+                );
+            """)
+            self.svs_cursor.execute("""
+                INSERT INTO appointments_new (fid, manual_name, appointment_type, time, alliance)
+                SELECT fid, NULL, appointment_type, time, alliance FROM appointments;
+            """)
+            self.svs_cursor.execute("DROP TABLE appointments;")
+            self.svs_cursor.execute("ALTER TABLE appointments_new RENAME TO appointments;")
+            self.svs_cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_fid_type ON appointments(fid, appointment_type) WHERE fid IS NOT NULL;"
+            )
+            self.svs_cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_manual_type ON appointments(manual_name, appointment_type) WHERE manual_name IS NOT NULL;"
+            )
+            self.svs_cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_type_time ON appointments(appointment_type, time);"
+            )
+            self.svs_conn.commit()
+            logger.info("Migrated appointments table to surrogate id PK + manual_name column")
+        except sqlite3.Error as e:
+            self.svs_conn.rollback()
+            logger.error(f"Failed to migrate appointments table: {e}")
+            raise
 
     async def cog_unload(self):
         """Close database connections when cog is unloaded."""
@@ -485,11 +537,35 @@ class MinisterSchedule(commands.Cog):
             print(f"Error in all_or_available autocomplete: {e}")
             return []
 
+    def _format_booked_line(self, time_slot, booked_fid, booked_manual_name, booked_alliance):
+        """
+        Formats a single booked-slot line. booked_fid/booked_manual_name are
+        mutually exclusive: a registered member has fid set and is looked up
+        against users/alliance_list; a portal-assigned manual/guest name has
+        manual_name set and no alliance.
+        """
+        if booked_fid:
+            self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
+            user = self.users_cursor.fetchone()
+            booked_nickname = user[0] if user else f"ID: {booked_fid}"
+
+            self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (booked_alliance,))
+            alliance_data = self.alliance_cursor.fetchone()
+            booked_alliance_name = alliance_data[0] if alliance_data else "Unknown"
+
+            # Wrap nickname in LTR embedding to prevent line reversal
+            return f"`{time_slot}` - [{booked_alliance_name}]\u202a{booked_nickname}\u202c - {booked_fid}"
+        elif booked_manual_name:
+            return f"`{time_slot}` - \u202a{booked_manual_name}\u202c"
+        return None
+
     # handler for looping through all times, reading current nicknames from the database
     # handler for looping through all times without updating fids
     def generate_time_list(self, booked_times):
         """
         Generates a list of time slots with their booking details.
+
+        booked_times: {time_slot: (fid, manual_name, alliance)}
         """
         time_list = []
         booked_fids = {}
@@ -503,19 +579,10 @@ class MinisterSchedule(commands.Cog):
         time_slots = self.get_time_slots(slot_mode)
 
         for time_slot in time_slots:
-            booked_fid, booked_alliance = booked_times.get(time_slot, ("", ""))
-            booked_nickname = ""
-            if booked_fid:
-                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
-                user = self.users_cursor.fetchone()
-                booked_nickname = user[0] if user else f"ID: {booked_fid}"
-
-                self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (booked_alliance,))
-                alliance_data = self.alliance_cursor.fetchone()
-                booked_alliance_name = alliance_data[0] if alliance_data else "Unknown"
-
-                # Wrap nickname in LTR embedding to prevent line reversal
-                time_list.append(f"`{time_slot}` - [{booked_alliance_name}]\u202a{booked_nickname}\u202c - {booked_fid}")
+            booked_fid, booked_manual_name, booked_alliance = booked_times.get(time_slot, ("", "", ""))
+            line = self._format_booked_line(time_slot, booked_fid, booked_manual_name, booked_alliance)
+            if line is not None:
+                time_list.append(line)
             else:
                 time_list.append(f"`{time_slot}` - ")
             booked_fids[time_slot] = booked_fid
@@ -542,11 +609,13 @@ class MinisterSchedule(commands.Cog):
                 time_list.append(f"`{time_slot}` - ")
 
         return time_list
-    
+
     # handler for looping through unavailable times
     def generate_booked_time_list(self, booked_times):
         """
         Generates a list of only booked time slots with their details.
+
+        booked_times: {time_slot: (fid, manual_name, alliance)}
         """
         time_list = []
 
@@ -560,19 +629,10 @@ class MinisterSchedule(commands.Cog):
 
         for time_slot in time_slots:
             if time_slot in booked_times:
-                booked_fid, booked_alliance = booked_times[time_slot]
-                booked_nickname = ""
-                if booked_fid:
-                    self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
-                    user = self.users_cursor.fetchone()
-                    booked_nickname = user[0] if user else f"ID: {booked_fid}"
-
-                    self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (booked_alliance,))
-                    alliance_data = self.alliance_cursor.fetchone()
-                    booked_alliance_name = alliance_data[0] if alliance_data else "Unknown"
-
-                    # Wrap nickname in LTR embedding to prevent line reversal
-                    time_list.append(f"`{time_slot}` - [{booked_alliance_name}]\u202a{booked_nickname}\u202c - {booked_fid}")
+                booked_fid, booked_manual_name, booked_alliance = booked_times[time_slot]
+                line = self._format_booked_line(time_slot, booked_fid, booked_manual_name, booked_alliance)
+                if line is not None:
+                    time_list.append(line)
 
         return time_list
 
@@ -789,13 +849,16 @@ class MinisterSchedule(commands.Cog):
                 return
 
             # Check if the time is already booked for this appointment type
-            self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=? AND time=?", (appointment_type, normalized_time))
+            self.svs_cursor.execute("SELECT fid, manual_name FROM appointments WHERE appointment_type=? AND time=?", (appointment_type, normalized_time))
             conflicting_booking = self.svs_cursor.fetchone()
             if conflicting_booking:
-                booked_fid = conflicting_booking[0]
-                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
-                booked_user = self.users_cursor.fetchone()
-                booked_nickname = booked_user[0] if booked_user else "Unknown"
+                booked_fid, booked_manual_name = conflicting_booking
+                if booked_fid:
+                    self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
+                    booked_user = self.users_cursor.fetchone()
+                    booked_nickname = booked_user[0] if booked_user else "Unknown"
+                else:
+                    booked_nickname = booked_manual_name or "Unknown"
                 await interaction.followup.send(f"The time {normalized_time} for {appointment_type} is already taken by {booked_nickname}.")
                 return
 
@@ -832,8 +895,8 @@ class MinisterSchedule(commands.Cog):
             await interaction.followup.send(f"Added {nickname} to {time}")
 
             # Update the appointment list
-            self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
-            booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
+            self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
+            booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
 
             if list_type == 3:
                 time_list, _ = self.generate_time_list(booked_times)
@@ -972,8 +1035,8 @@ class MinisterSchedule(commands.Cog):
             await interaction.followup.send(f"Removed {nickname}")
 
             # Send the list of times for the selected appointment type
-            self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
-            booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
+            self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
+            booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
 
             if list_type == 3:
                 time_list, _ = self.generate_time_list(booked_times)
@@ -1036,8 +1099,8 @@ class MinisterSchedule(commands.Cog):
 
                 if response.content.lower() == "yes":
                     # Retrieve booked times before deletion
-                    self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
-                    booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
+                    self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
+                    booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
 
                     # Generate available times list
                     time_list, _ = self.generate_time_list(booked_times)
@@ -1119,8 +1182,8 @@ class MinisterSchedule(commands.Cog):
             await interaction.response.defer()
 
             # Fetch the booked times for the specific appointment type
-            self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
-            booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
+            self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (appointment_type,))
+            booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
 
             if all_or_available == "all":
                 time_list, _ = self.generate_time_list(booked_times)

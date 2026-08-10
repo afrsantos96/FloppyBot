@@ -5,5 +5,16 @@ services:
     volumes:
       - /opt/docker/kingshot/db/:/app/db
     restart: unless-stopped
+    # Bound to loopback only -- put a reverse proxy (nginx/Caddy) in front on
+    # the host to terminate TLS and forward to 127.0.0.1:8090. The portal
+    # itself only speaks plain HTTP.
+    ports:
+      - "127.0.0.1:${PORTAL_PORT:-8090}:8090"
     environment:
       - DISCORD_BOT_TOKEN=<your bot token here>
+      # Minister scheduling web portal (optional). Leave PORTAL_ENABLED unset
+      # or set to 0 to disable it entirely.
+      - PORTAL_ENABLED=1
+      - PORTAL_PORT=8090
+      - PORTAL_BASE_URL=https://portal.example.com
+      - PORTAL_SIGNING_SECRET=<generate with: openssl rand -hex 32>

@@ -9,6 +9,8 @@ from contextlib import closing
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message
 from .alliance_member_edit import apply_member_edit
+from web.config import load_portal_config
+from web.auth import issue_magic_link_payload, record_portal_token, sign_token
 
 logger = logging.getLogger('bot')
 
@@ -106,14 +108,14 @@ class FilteredUserSelectView(discord.ui.View):
         self.cog = cog
         self.activity_name = activity_name
         self.users = users  # List of (fid, nickname, alliance_id) tuples
-        self.booked_times = booked_times  # Dict of time: (fid, alliance) for this activity
+        self.booked_times = booked_times  # Dict of time: (fid, manual_name, alliance) for this activity
         self.page = page
         self.filter_text = ""
         self.filtered_users = self.users.copy()
         self.max_page = (len(self.filtered_users) - 1) // 25 if self.filtered_users else 0
 
         # Get list of IDs that are already booked for this activity
-        self.booked_fids = {fid for time, (fid, alliance) in self.booked_times.items() if fid}
+        self.booked_fids = {fid for time, (fid, manual_name, alliance) in self.booked_times.items() if fid}
         
         self.update_select_menu()
         self.update_navigation_buttons()
@@ -304,8 +306,8 @@ class ClearConfirmationView(discord.ui.View):
         
         if self.is_global_admin:
             # Get all appointments to log before clearing
-            self.cog.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (self.activity_name,))
-            cleared_fids = {row[0]: (row[1], row[2]) for row in self.cog.svs_cursor.fetchall()}
+            self.cog.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (self.activity_name,))
+            cleared_fids = {row[0]: (row[1], row[2], row[3]) for row in self.cog.svs_cursor.fetchall()}
 
             time_list, _ = minister_schedule_cog.generate_time_list(cleared_fids)
 
@@ -551,6 +553,10 @@ class MinisterChannelView(discord.ui.View):
     @discord.ui.button(label="Settings", style=discord.ButtonStyle.secondary, emoji=f"{theme.settingsIcon}", row=1)
     async def settings(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.show_settings_menu(interaction)
+
+    @discord.ui.button(label="Online Manage Portal", style=discord.ButtonStyle.success, emoji=f"{theme.linkIcon}", row=1)
+    async def online_portal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.send_portal_link(interaction)
 
     @discord.ui.button(label="Main Menu", style=discord.ButtonStyle.secondary, emoji=f"{theme.homeIcon}", row=2)
     async def main_menu_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -873,7 +879,9 @@ class MinisterMenu(commands.Cog):
                 f"{theme.archiveIcon} **Event Archive**\n"
                 f"└ Save and view past KvK minister schedules\n\n"
                 f"{theme.settingsIcon} **Settings**\n"
-                f"└ Update names, clear reservations and more\n"
+                f"└ Update names, clear reservations and more\n\n"
+                f"{theme.linkIcon} **Online Manage Portal**\n"
+                f"└ Get a one-time link to edit the schedule in a browser\n"
                 f"{theme.lowerDivider}"
             ),
             color=embed_color
@@ -977,6 +985,44 @@ class MinisterMenu(commands.Cog):
             alliance_ids = [row[0] for row in cursor.fetchall()]
         return True, False, alliance_ids
 
+    async def send_portal_link(self, interaction: discord.Interaction):
+        """Generate a one-time magic link into the web portal and reply with
+        it ephemerally. No DM dependency, matches every other confirmation
+        in this menu."""
+        is_admin, is_global_admin, alliance_ids = await self.get_admin_permissions(interaction.user.id)
+        if not is_admin:
+            await interaction.response.send_message(
+                f"{theme.deniedIcon} You do not have permission to use the online portal.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        cfg = load_portal_config()
+        if not cfg:
+            await interaction.followup.send(
+                f"{theme.deniedIcon} The online portal is not configured on this bot. Contact the bot host.",
+                ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id if interaction.guild else None
+        if not guild_id:
+            await interaction.followup.send(
+                f"{theme.deniedIcon} The online portal must be opened from within a server.", ephemeral=True
+            )
+            return
+
+        payload = issue_magic_link_payload(interaction.user.id, guild_id)
+        record_portal_token(payload["jti"], interaction.user.id)
+        token = sign_token(payload, cfg.signing_secret)
+        link = f"{cfg.base_url}/portal/{token}"
+
+        await interaction.followup.send(
+            f"{theme.verifiedIcon} Your one-time portal link (expires in 5 minutes, single use):\n{link}",
+            ephemeral=True
+        )
+
     async def show_filtered_user_select(self, interaction: discord.Interaction, activity_name: str):
         """Show the filtered user selection view"""
         # Check admin permissions
@@ -995,23 +1041,23 @@ class MinisterMenu(commands.Cog):
             return
         
         # Get current bookings for this activity
-        self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
-        booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
-        
+        self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
+        booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
+
         # Create the view
         view = FilteredUserSelectView(self.bot, self, activity_name, users, booked_times)
-        
+
         # Initial embed
         await view.update_embed(interaction)
-    
+
     async def show_current_schedule_list(self, interaction: discord.Interaction, activity_name: str):
         """Show a paginated list of current bookings"""
         await interaction.response.defer()
-        
+
         # Get bookings
-        self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=? ORDER BY time", (activity_name,))
+        self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=? ORDER BY time", (activity_name,))
         bookings = self.svs_cursor.fetchall()
-        
+
         if not bookings:
             embed = discord.Embed(
                 title=f"{theme.listIcon} {activity_name} Schedule",
@@ -1020,22 +1066,25 @@ class MinisterMenu(commands.Cog):
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
-        
+
         # Build booking list with user info
         booking_lines = []
-        for time, fid, alliance_id in bookings:
-            # Get user info
-            self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
-            user_result = self.users_cursor.fetchone()
-            nickname = user_result[0] if user_result else f"Unknown ({fid})"
-            
-            # Get alliance info
-            self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-            alliance_result = self.alliance_cursor.fetchone()
-            alliance_name = alliance_result[0] if alliance_result else "Unknown"
-            
-            booking_lines.append(f"`{time}` - [{alliance_name}] {nickname} ({fid})")
-        
+        for time, fid, manual_name, alliance_id in bookings:
+            if fid:
+                # Get user info
+                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
+                user_result = self.users_cursor.fetchone()
+                nickname = user_result[0] if user_result else f"Unknown ({fid})"
+
+                # Get alliance info
+                self.alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                alliance_result = self.alliance_cursor.fetchone()
+                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+
+                booking_lines.append(f"`{time}` - [{alliance_name}] {nickname} ({fid})")
+            else:
+                booking_lines.append(f"`{time}` - {manual_name}")
+
         # Create embed with all bookings
         embed = discord.Embed(
             title=f"{theme.listIcon} {activity_name} Schedule",
@@ -1057,14 +1106,14 @@ class MinisterMenu(commands.Cog):
             return
         
         # Get current bookings for this activity
-        self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
-        booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
-        
+        self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
+        booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
+
         # Create the view
         view = FilteredUserSelectView(self.bot, self, activity_name, users, booked_times)
-        
+
         # Get current stats
-        total_booked = len({fid for time, (fid, alliance) in booked_times.items() if fid})
+        total_booked = len(booked_times)
         available_slots = 48 - total_booked
         
         # Create description with message
@@ -1098,7 +1147,7 @@ class MinisterMenu(commands.Cog):
     
     async def update_minister_names(self, interaction: discord.Interaction, activity_name: str):
         """Open a modal to manually set booked ministers' names for this activity."""
-        self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=? ORDER BY time", (activity_name,))
+        self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=? AND fid IS NOT NULL ORDER BY time", (activity_name,))
         fids = [row[0] for row in self.svs_cursor.fetchall()]
 
         if not fids:
@@ -1204,16 +1253,21 @@ class MinisterMenu(commands.Cog):
                 await interaction.response.defer()
 
             # Conflict check runs first so a taken slot leaves the existing booking untouched.
+            # fid IS NULL catches slots occupied by a portal-assigned manual name (fid != ? is
+            # NULL/false for those rows in SQL and would otherwise silently miss the conflict).
             self.svs_cursor.execute(
-                "SELECT fid FROM appointments WHERE appointment_type=? AND time=? AND fid != ?",
+                "SELECT fid, manual_name FROM appointments WHERE appointment_type=? AND time=? AND (fid IS NULL OR fid != ?)",
                 (activity_name, selected_time, fid)
             )
             conflicting_booking = self.svs_cursor.fetchone()
             if conflicting_booking:
-                booked_fid = conflicting_booking[0]
-                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
-                booked_user = self.users_cursor.fetchone()
-                booked_nickname = booked_user[0] if booked_user else "Unknown"
+                booked_fid, booked_manual_name = conflicting_booking
+                if booked_fid:
+                    self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (booked_fid,))
+                    booked_user = self.users_cursor.fetchone()
+                    booked_nickname = booked_user[0] if booked_user else "Unknown"
+                else:
+                    booked_nickname = booked_manual_name or "Unknown"
 
                 error_msg = f"The time {selected_time} for {activity_name} is already taken by {booked_nickname}"
                 # Return to user selection with error in embed
@@ -1320,8 +1374,8 @@ class MinisterMenu(commands.Cog):
                 return
 
             # Get current booked times
-            self.svs_cursor.execute("SELECT time, fid, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
-            booked_times = {row[0]: (row[1], row[2]) for row in self.svs_cursor.fetchall()}
+            self.svs_cursor.execute("SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?", (activity_name,))
+            booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
 
             # Generate time list
             list_type = await minister_schedule_cog.get_channel_id("list type")
@@ -1684,8 +1738,9 @@ class MinisterMenu(commands.Cog):
         try:
             await interaction.response.defer()
 
-            # Get all appointments
-            self.svs_cursor.execute("SELECT fid, appointment_type, time, alliance FROM appointments")
+            # Get all appointments (by surrogate id, so this also covers portal-assigned
+            # manual_name rows which have no fid to key an UPDATE off of)
+            self.svs_cursor.execute("SELECT id, fid, appointment_type, time, alliance FROM appointments")
             appointments = self.svs_cursor.fetchall()
 
             if not appointments:
@@ -1704,15 +1759,15 @@ class MinisterMenu(commands.Cog):
 
             # Build migration mapping
             migrations = []
-            for fid, appointment_type, old_time, alliance in appointments:
+            for appt_id, fid, appointment_type, old_time, alliance in appointments:
                 new_time = self.convert_time_slot(old_time, old_mode, new_mode)
-                migrations.append((fid, appointment_type, old_time, new_time, alliance))
+                migrations.append((appt_id, new_time))
 
             # Update database atomically
-            for fid, appointment_type, old_time, new_time, alliance in migrations:
+            for appt_id, new_time in migrations:
                 self.svs_cursor.execute(
-                    "UPDATE appointments SET time=? WHERE fid=? AND appointment_type=?",
-                    (new_time, fid, appointment_type)
+                    "UPDATE appointments SET time=? WHERE id=?",
+                    (new_time, appt_id)
                 )
 
             # Update slot mode

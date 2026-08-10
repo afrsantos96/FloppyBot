@@ -1831,6 +1831,12 @@ if __name__ == "__main__":
             # Start bot in background task
             bot_task = asyncio.create_task(main())
 
+            # Start the minister scheduling web portal (if configured). Runs
+            # independently of the gateway connection so it isn't bounced by
+            # reconnects; portal route handlers guard for cogs not yet loaded.
+            from web.server import start_portal, stop_portal
+            portal_runner = await start_portal(bot)
+
             # Wait for either bot to finish or shutdown signal
             shutdown_task = asyncio.create_task(stop_event.wait())
             done, pending = await asyncio.wait(
@@ -1845,6 +1851,8 @@ if __name__ == "__main__":
                     await task
                 except asyncio.CancelledError:
                     pass
+
+            await stop_portal(portal_runner)
 
             # Properly close the bot and await completion
             if not bot.is_closed():

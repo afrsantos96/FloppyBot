@@ -17,8 +17,8 @@ ms = importlib.import_module("cogs.minister_schedule")
 def _dbs():
     svs = sqlite3.connect(":memory:")
     svs.execute("""CREATE TABLE appointments (
-        fid INTEGER, appointment_type TEXT, time TEXT, alliance INTEGER,
-        PRIMARY KEY (fid, appointment_type))""")
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fid INTEGER, manual_name TEXT, appointment_type TEXT, time TEXT, alliance INTEGER)""")
     svs.commit()
 
     users = sqlite3.connect(":memory:")
@@ -69,8 +69,8 @@ def _interaction():
 
 def test_conflict_on_reschedule_keeps_old_booking():
     svs, users, alliance = _dbs()
-    svs.execute("INSERT INTO appointments VALUES (1, 'Construction', '10:00', 5)")
-    svs.execute("INSERT INTO appointments VALUES (2, 'Construction', '14:00', 5)")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Construction', '10:00', 5)")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (2, 'Construction', '14:00', 5)")
     svs.commit()
     cog, results = _mk_cog(svs, users, alliance)
     inter, sent = _interaction()
@@ -89,7 +89,7 @@ def test_conflict_on_reschedule_keeps_old_booking():
 
 def test_repick_own_slot_succeeds():
     svs, users, alliance = _dbs()
-    svs.execute("INSERT INTO appointments VALUES (1, 'Construction', '10:00', 5)")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Construction', '10:00', 5)")
     svs.commit()
     cog, results = _mk_cog(svs, users, alliance)
     inter, sent = _interaction()
@@ -105,7 +105,7 @@ def test_repick_own_slot_succeeds():
 
 def test_reschedule_moves_booking():
     svs, users, alliance = _dbs()
-    svs.execute("INSERT INTO appointments VALUES (1, 'Construction', '10:00', 5)")
+    svs.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (1, 'Construction', '10:00', 5)")
     svs.commit()
     cog, results = _mk_cog(svs, users, alliance)
     inter, sent = _interaction()
@@ -131,7 +131,7 @@ def test_generate_time_list_survives_deleted_account():
     cog.users_cursor = users.cursor()
     cog.alliance_cursor = alliance.cursor()
 
-    time_list, booked = cog.generate_time_list({"00:00": (123, 5)})
+    time_list, booked = cog.generate_time_list({"00:00": (123, None, 5)})
 
     joined = "\n".join(time_list)
     assert "123" in joined

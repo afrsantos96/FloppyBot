@@ -19,3 +19,5 @@
 !.github/workflows/docker.yml
 !tests/
 !tests/**
+!web/
+!web/**

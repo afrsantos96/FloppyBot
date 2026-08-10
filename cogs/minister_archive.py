@@ -415,6 +415,7 @@ class MinisterArchive(commands.Cog):
                 FOREIGN KEY (archive_id) REFERENCES minister_archives(archive_id)
             );
         """)
+        self._migrate_archive_appointments_table()
 
         self.svs_cursor.execute("""
             CREATE TABLE IF NOT EXISTS minister_change_history (
@@ -436,6 +437,43 @@ class MinisterArchive(commands.Cog):
         """)
 
         self.svs_conn.commit()
+
+    def _migrate_archive_appointments_table(self):
+        """One-time rebuild of `minister_archive_appointments` to relax fid to
+        nullable and add manual_name, matching the same change made to the
+        live `appointments` table for portal-assigned (unregistered) names.
+        """
+        cols = [row[1] for row in self.svs_cursor.execute("PRAGMA table_info(minister_archive_appointments)").fetchall()]
+        if "manual_name" in cols:
+            return  # already migrated
+
+        try:
+            self.svs_cursor.execute("""
+                CREATE TABLE minister_archive_appointments_new (
+                    archive_id INTEGER NOT NULL,
+                    fid INTEGER,
+                    manual_name TEXT,
+                    appointment_type TEXT NOT NULL,
+                    time TEXT NOT NULL,
+                    alliance INTEGER,
+                    nickname TEXT NOT NULL,
+                    FOREIGN KEY (archive_id) REFERENCES minister_archives(archive_id)
+                );
+            """)
+            self.svs_cursor.execute("""
+                INSERT INTO minister_archive_appointments_new
+                (archive_id, fid, manual_name, appointment_type, time, alliance, nickname)
+                SELECT archive_id, fid, NULL, appointment_type, time, alliance, nickname
+                FROM minister_archive_appointments;
+            """)
+            self.svs_cursor.execute("DROP TABLE minister_archive_appointments;")
+            self.svs_cursor.execute("ALTER TABLE minister_archive_appointments_new RENAME TO minister_archive_appointments;")
+            self.svs_conn.commit()
+            logger.info("Migrated minister_archive_appointments table to add manual_name column")
+        except sqlite3.Error as e:
+            self.svs_conn.rollback()
+            logger.error(f"Failed to migrate minister_archive_appointments table: {e}")
+            raise
 
     async def cog_unload(self):
         """Close database connections when cog is unloaded."""
@@ -486,7 +524,7 @@ class MinisterArchive(commands.Cog):
 
         try:
             # Get current appointments
-            self.svs_cursor.execute("SELECT fid, appointment_type, time, alliance FROM appointments")
+            self.svs_cursor.execute("SELECT fid, manual_name, appointment_type, time, alliance FROM appointments")
             appointments = self.svs_cursor.fetchall()
 
             if not appointments:
@@ -506,17 +544,20 @@ class MinisterArchive(commands.Cog):
             archive_id = self.svs_cursor.lastrowid
 
             # Save appointments with nicknames
-            for fid, appointment_type, time, alliance in appointments:
-                # Get nickname from users table
-                self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
-                user_result = self.users_cursor.fetchone()
-                nickname = user_result[0] if user_result else f"ID: {fid}"
+            for fid, manual_name, appointment_type, time, alliance in appointments:
+                if fid:
+                    # Get nickname from users table
+                    self.users_cursor.execute("SELECT nickname FROM users WHERE fid=?", (fid,))
+                    user_result = self.users_cursor.fetchone()
+                    nickname = user_result[0] if user_result else f"ID: {fid}"
+                else:
+                    nickname = manual_name or "Unknown"
 
                 self.svs_cursor.execute("""
                     INSERT INTO minister_archive_appointments
-                    (archive_id, fid, appointment_type, time, alliance, nickname)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (archive_id, fid, appointment_type, time, alliance, nickname))
+                    (archive_id, fid, manual_name, appointment_type, time, alliance, nickname)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (archive_id, fid, manual_name, appointment_type, time, alliance, nickname))
 
             self.svs_conn.commit()
 
@@ -679,7 +720,7 @@ class MinisterArchive(commands.Cog):
                     ma.archive_name,
                     ma.created_at,
                     ma.created_by_name,
-                    COUNT(maa.fid) as appointment_count
+                    COUNT(maa.time) as appointment_count
                 FROM minister_archives ma
                 LEFT JOIN minister_archive_appointments maa ON ma.archive_id = maa.archive_id
                 GROUP BY ma.archive_id
@@ -832,13 +873,17 @@ class MinisterArchive(commands.Cog):
             # Build appointment lines
             appointment_lines = []
             for time, fid, nickname, alliance_id in page_appointments:
-                # Get alliance name
-                alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-                alliance_result = alliance_cursor.fetchone()
-                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+                if fid:
+                    # Get alliance name
+                    alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                    alliance_result = alliance_cursor.fetchone()
+                    alliance_name = alliance_result[0] if alliance_result else "Unknown"
 
-                # Format line like current schedule display
-                appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                    # Format line like current schedule display
+                    appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                else:
+                    # Portal-assigned manual/guest name — no fid or alliance
+                    appointment_lines.append(f"`{time}` - {nickname}")
 
             description = "\n".join(appointment_lines) if appointment_lines else "No appointments to display."
 
@@ -897,13 +942,16 @@ class MinisterArchive(commands.Cog):
             # Build appointment list
             appointment_lines = []
             for time, fid, nickname, alliance_id in appointments:
-                # Get alliance name
-                alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-                alliance_result = alliance_cursor.fetchone()
-                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+                if fid:
+                    # Get alliance name
+                    alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                    alliance_result = alliance_cursor.fetchone()
+                    alliance_name = alliance_result[0] if alliance_result else "Unknown"
 
-                # Format line like current schedule display
-                appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                    # Format line like current schedule display
+                    appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                else:
+                    appointment_lines.append(f"`{time}` - {nickname}")
 
             # Split into chunks if too long (Discord embed description limit is 4096 characters)
             description_text = "\n".join(appointment_lines)
