@@ -235,24 +235,38 @@ class MinisterSchedule(commands.Cog):
             return  # nothing to migrate
 
         try:
-            # (appointment_type, time) is uniquely indexed, so two legacy rows
-            # at the same time (e.g. Construction Day 10:00 and Research Day
-            # 10:00) would collide once both become "Chief Minister". Keep the
-            # earliest by id, drop the rest -- rare, but must not crash the merge.
+            # Three separate unique indexes apply once every legacy row becomes
+            # "Chief Minister": (appointment_type, time) -- two legacy rows at the
+            # same time collide; (fid, appointment_type) -- the same member holding
+            # both e.g. a Construction Day slot and a Troops Training Day slot
+            # collides, since one person can only hold one Chief Minister seat;
+            # (manual_name, appointment_type) -- same idea for portal-assigned
+            # guest names. Keep the earliest row (by id) for each, drop the rest --
+            # rare, but must not crash the merge.
             rows = self.svs_cursor.execute(
-                "SELECT id, time FROM appointments WHERE appointment_type IN (?, ?, ?) ORDER BY time, id",
+                "SELECT id, time, fid, manual_name FROM appointments WHERE appointment_type IN (?, ?, ?) ORDER BY id",
                 LEGACY_TYPES
             ).fetchall()
-            seen_times = set()
-            for row_id, time_slot in rows:
-                if time_slot in seen_times:
+            seen_times, seen_fids, seen_manual_names = set(), set(), set()
+            for row_id, time_slot, fid, manual_name in rows:
+                collides = (
+                    time_slot in seen_times
+                    or (fid is not None and fid in seen_fids)
+                    or (manual_name is not None and manual_name in seen_manual_names)
+                )
+                if collides:
                     logger.warning(
-                        f"Dropping appointment id={row_id} at {time_slot}: collides with another "
-                        f"legacy-type booking at the same time during the Chief Minister merge"
+                        f"Dropping appointment id={row_id} (fid={fid}, manual_name={manual_name!r}, "
+                        f"time={time_slot}): collides with another legacy-type booking during the "
+                        f"Chief Minister merge"
                     )
                     self.svs_cursor.execute("DELETE FROM appointments WHERE id=?", (row_id,))
                 else:
                     seen_times.add(time_slot)
+                    if fid is not None:
+                        seen_fids.add(fid)
+                    if manual_name is not None:
+                        seen_manual_names.add(manual_name)
 
             self.svs_cursor.execute(
                 "UPDATE appointments SET appointment_type='Chief Minister' WHERE appointment_type IN (?, ?, ?)",

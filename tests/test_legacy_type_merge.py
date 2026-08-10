@@ -75,6 +75,25 @@ def test_same_time_collision_across_legacy_types_keeps_one():
     assert rows == [(1, "Chief Minister", "10:00")], "the earlier row (lower id) must be kept"
 
 
+def test_same_fid_across_legacy_types_keeps_one():
+    """A member holding both a Construction Day slot AND a Troops Training Day
+    slot (different times, so no time collision) would violate the
+    (fid, appointment_type) unique index once both become Chief Minister --
+    one person can only hold one Chief Minister seat. Reproduces a real
+    IntegrityError hit in production."""
+    conn = _new_schema_conn()
+    conn.execute("CREATE UNIQUE INDEX idx_appt_fid_type ON appointments(fid, appointment_type) WHERE fid IS NOT NULL")
+    conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (42, 'Troops Training Day', '00:00', 5)")
+    conn.execute("INSERT INTO appointments (fid, appointment_type, time, alliance) VALUES (42, 'Construction Day', '01:30', 5)")
+    conn.commit()
+    cog = _mk_cog(conn)
+
+    cog._migrate_legacy_appointment_types()  # must not raise IntegrityError
+
+    rows = conn.execute("SELECT fid, appointment_type, time FROM appointments").fetchall()
+    assert rows == [(42, "Chief Minister", "00:00")], "the earlier row (lower id) must be kept"
+
+
 def test_legacy_channels_consolidated_to_chief_minister_channel():
     conn = _new_schema_conn()
     conn.execute("INSERT INTO reference VALUES ('Construction Day channel', 555)")
