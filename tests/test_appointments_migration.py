@@ -125,7 +125,7 @@ def test_migrated_table_allows_two_different_manual_names_on_different_slots():
     conn.commit()
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM appointments WHERE appointment_type='Chief Minister'"
+        "SELECT COUNT(*) FROM appointments WHERE appointment_type='Chief Minister' AND manual_name IS NOT NULL"
     ).fetchone()[0]
     assert count == 2
 

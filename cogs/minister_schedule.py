@@ -228,7 +228,10 @@ class MinisterSchedule(commands.Cog):
             "SELECT COUNT(*) FROM reference WHERE context IN (?, ?, ?)",
             tuple(f"{t} channel" for t in LEGACY_TYPES)
         ).fetchone()[0]
-        if not legacy_rows and not legacy_channels:
+        legacy_messages = self.svs_cursor.execute(
+            "SELECT COUNT(*) FROM reference WHERE context IN (?, ?, ?)", LEGACY_TYPES
+        ).fetchone()[0]
+        if not legacy_rows and not legacy_channels and not legacy_messages:
             return  # nothing to migrate
 
         try:
