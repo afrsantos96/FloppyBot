@@ -1,16 +1,12 @@
 """
 Portal-assigned slots have no registered fid -- they're stored as
-(fid=NULL, manual_name=<text>). Every board-text generator and the Discord
-reschedule conflict-check must treat those rows as "occupied", not silently
-skip them (a NULL fid is falsy, and `fid != ?` is NULL/false in SQL for a
-NULL row, so both are easy to get wrong).
+(fid=NULL, manual_name=<text>). Every board-text generator must treat those
+rows as "occupied", not silently skip them (a NULL fid is falsy, so it's
+easy to get wrong).
 """
-import asyncio
 import importlib
 import sqlite3
-from types import SimpleNamespace
 
-mm = importlib.import_module("cogs.minister_menu")
 ms = importlib.import_module("cogs.minister_schedule")
 
 
@@ -87,48 +83,3 @@ def test_generate_time_list_still_handles_fid_rows():
     assert "TestAlli" in joined
 
 
-def _mk_menu_cog(svs, users, alliance):
-    cog = mm.MinisterMenu.__new__(mm.MinisterMenu)
-    cog.svs_conn = svs
-    cog.svs_cursor = svs.cursor()
-    cog.users_cursor = users.cursor()
-    cog.alliance_cursor = alliance.cursor()
-    cog.bot = SimpleNamespace(get_cog=lambda name: None)
-
-    async def show_filtered(interaction, activity, msg, is_error=False):
-        cog._last_message = (msg, is_error)
-
-    cog.show_filtered_user_select_with_message = show_filtered
-    return cog
-
-
-def _interaction():
-    return SimpleNamespace(
-        response=SimpleNamespace(is_done=lambda: True),
-        followup=SimpleNamespace(send=lambda *a, **k: asyncio.sleep(0)),
-        user=SimpleNamespace(display_name="Admin", avatar=None),
-    )
-
-
-def test_complete_booking_detects_conflict_with_manual_name_slot():
-    """A slot occupied by a portal-assigned manual name must block a Discord
-    fid booking attempt on the same slot -- previously `fid != ?` silently
-    passed NULL-fid rows through, allowing a double-booking."""
-    svs, users, alliance = _dbs()
-    svs.execute(
-        "INSERT INTO appointments (fid, manual_name, appointment_type, time, alliance) "
-        "VALUES (NULL, 'Guest Governor', 'Chief Minister', '09:00', NULL)"
-    )
-    svs.commit()
-    cog = _mk_menu_cog(svs, users, alliance)
-    inter = _interaction()
-
-    asyncio.run(cog.complete_booking(inter, "Chief Minister", "1", "09:00"))
-
-    assert cog._last_message[1] is True, "must report a conflict, not silently overwrite the manual-name slot"
-    assert "Guest Governor" in cog._last_message[0]
-    # The manual-name row must still be there -- fid 1 must not have been inserted.
-    row = svs.execute(
-        "SELECT fid, manual_name FROM appointments WHERE appointment_type='Chief Minister' AND time='09:00'"
-    ).fetchone()
-    assert row == (None, "Guest Governor")
