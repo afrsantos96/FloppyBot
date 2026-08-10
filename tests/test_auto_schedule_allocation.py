@@ -97,6 +97,26 @@ def test_wraparound_window_crossing_midnight():
     assert result["assigned"][0]["time"] in ("23:00", "23:30", "00:00", "00:30", "01:00")
 
 
+def test_wide_range_person_does_not_steal_a_narrow_persons_only_slot():
+    """Reproduces a real reported bug: Vala (35 days, wants anywhere 16:00-23:00)
+    outranks Yargic (30 days, wants only 16:00) and is processed first. A
+    naive "take the earliest free slot" greedy algorithm makes Vala grab
+    16:00 -- the one slot Yargic could ever use -- even though Vala had 14
+    other equally-valid slots available. Vala must still get a slot (she
+    outranks Yargic), just not needlessly the one Yargic depends on."""
+    requests = [
+        {"name": "Vala", "speedup_hours": 840, "preferred_windows": [{"start": "16:00", "end": "23:00"}]},
+        {"name": "Yargic", "speedup_hours": 720, "preferred_windows": [{"start": "16:00", "end": "16:00"}]},
+    ]
+    result = auto_schedule.allocate_slots(requests, STANDARD_SLOTS)
+
+    by_name = {a["name"]: a["time"] for a in result["assigned"]}
+    assert by_name.get("Yargic") == "16:00", "Yargic's only possible slot must go to Yargic"
+    assert "Vala" in by_name, "Vala outranks Yargic and must still get scheduled"
+    assert by_name["Vala"] != "16:00"
+    assert result["unscheduled"] == []
+
+
 def test_never_double_books_a_slot_even_with_many_flexible_requests():
     requests = [{"name": f"Person{i}", "speedup_hours": i, "preferred_windows": []} for i in range(48)]
     result = auto_schedule.allocate_slots(requests, STANDARD_SLOTS)

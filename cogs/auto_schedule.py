@@ -54,30 +54,63 @@ def _candidate_slots(preferred_windows, time_slots):
     return candidates
 
 
+def _pick_slot(candidates, taken, remaining_reqs, candidates_by_name):
+    """Which of this person's still-free candidate slots to take.
+
+    A naive "always take the earliest free one" breaks when a high-priority
+    person with a WIDE window is processed before a low-priority person with
+    a NARROW one: the wide person has no reason to prefer any particular
+    slot, so grabbing the first one can accidentally take the only slot the
+    narrow person could ever use, starving them even though the wide person
+    could just as easily have taken a different slot instead.
+
+    So when there's a real choice, prefer the candidate that's least in
+    demand among people not yet processed -- weighted by how few
+    alternatives *they* have, so a slot that's someone else's only option is
+    protected more strongly than one several people could still fall back to.
+    """
+    if len(candidates) <= 1:
+        return candidates[0] if candidates else None
+
+    remaining_live = []
+    for other in remaining_reqs:
+        live = [s for s in candidates_by_name[other["name"]] if s not in taken]
+        if live:
+            remaining_live.append(live)
+
+    def demand_score(slot):
+        return sum(1.0 / len(live) for live in remaining_live if slot in live)
+
+    return min(candidates, key=lambda s: (demand_score(s), candidates.index(s)))
+
+
 def allocate_slots(requests: list, time_slots: list) -> dict:
     """
     requests: [{"name": str, "speedup_hours": float, "preferred_windows": [{"start": "HH:MM", "end": "HH:MM"}, ...]}, ...]
     time_slots: the ordered 48-slot grid (from MinisterSchedule.get_time_slots)
 
-    Deterministic, conflict-free: higher speedup_hours picks first; within a
-    person's candidate slots, the earliest-listed free one wins; a person
-    with no free candidate slot left is reported unscheduled rather than
-    silently dropped or double-booking someone else.
+    Deterministic, conflict-free: higher speedup_hours always picks before
+    lower, and always gets a slot if one of their candidates is free. Among
+    a person's own candidates, ties are broken to avoid needlessly starving
+    a lower-priority person who has fewer options (see _pick_slot) -- this
+    never costs the higher-priority person anything, since it only chooses
+    between slots that are equally valid for them.
 
     Returns {"assigned": [{"name": str, "time": "HH:MM"}], "unscheduled": [str]}.
     """
     # Stable sort: equal speedup_hours keep their original (message) order.
     ordered = sorted(requests, key=lambda r: -(r.get("speedup_hours") or 0))
+    candidates_by_name = {req["name"]: _candidate_slots(req.get("preferred_windows"), time_slots) for req in ordered}
 
     taken = set()
     assigned = []
     unscheduled = []
 
-    for req in ordered:
+    for i, req in enumerate(ordered):
         name = req["name"]
-        candidates = _candidate_slots(req.get("preferred_windows"), time_slots)
+        free_candidates = [s for s in candidates_by_name[name] if s not in taken]
 
-        chosen = next((slot for slot in candidates if slot not in taken), None)
+        chosen = _pick_slot(free_candidates, taken, ordered[i + 1:], candidates_by_name)
         if chosen:
             taken.add(chosen)
             assigned.append({"name": name, "time": chosen})
@@ -105,6 +138,14 @@ class AutoScheduleView(discord.ui.View):
             await interaction.response.send_message(f"{theme.deniedIcon} Minister Menu module not found.", ephemeral=True)
             return
         await minister_menu_cog.show_current_schedule_list(interaction, APPOINTMENT_TYPE)
+
+    @discord.ui.button(label="Full List", style=discord.ButtonStyle.primary, emoji=f"{theme.listIcon}")
+    async def full_list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        minister_menu_cog = self.bot.get_cog("MinisterMenu")
+        if not minister_menu_cog:
+            await interaction.response.send_message(f"{theme.deniedIcon} Minister Menu module not found.", ephemeral=True)
+            return
+        await minister_menu_cog.show_full_schedule_list(interaction, APPOINTMENT_TYPE)
 
     @discord.ui.button(label="Clear", style=discord.ButtonStyle.danger, emoji=f"{theme.trashIcon}")
     async def clear_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):

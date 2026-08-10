@@ -313,6 +313,10 @@ class MinisterChannelView(discord.ui.View):
     async def list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.show_current_schedule_list(interaction, "Chief Minister")
 
+    @discord.ui.button(label="Full List", style=discord.ButtonStyle.primary, emoji=f"{theme.listIcon}", row=1)
+    async def full_list_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.show_full_schedule_list(interaction, "Chief Minister")
+
     @discord.ui.button(label="Auto Schedule", style=discord.ButtonStyle.success, emoji=f"{theme.robotIcon}", row=1)
     async def auto_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
         auto_schedule_cog = self.bot.get_cog("AutoSchedule")
@@ -699,7 +703,35 @@ class MinisterMenu(commands.Cog):
         embed.set_footer(text=f"Total bookings: {len(bookings)}/48")
 
         await interaction.followup.send(embed=embed)
-    
+
+    async def show_full_schedule_list(self, interaction: discord.Interaction, activity_name: str):
+        """Show every one of the 48 slots, booked or not -- unlike
+        show_current_schedule_list, which only lists actual bookings."""
+        await interaction.response.defer()
+
+        minister_schedule_cog = self.bot.get_cog("MinisterSchedule")
+        if not minister_schedule_cog:
+            await interaction.followup.send(f"{theme.deniedIcon} Minister Schedule module not found.", ephemeral=True)
+            return
+
+        self.svs_cursor.execute(
+            "SELECT time, fid, manual_name, alliance FROM appointments WHERE appointment_type=?",
+            (activity_name,)
+        )
+        booked_times = {row[0]: (row[1], row[2], row[3]) for row in self.svs_cursor.fetchall()}
+
+        time_list, _ = minister_schedule_cog.generate_time_list(booked_times)
+        description = "\n".join(time_list)
+        if len(description) > 4000:
+            description = description[:3950] + "\n\n*... (list truncated due to length)*"
+
+        embed = discord.Embed(
+            title=f"{theme.listIcon} {activity_name} Full Schedule (all 48 slots)",
+            description=description,
+            color=theme.emColor1
+        )
+        await interaction.followup.send(embed=embed)
+
     async def update_minister_names(self, interaction: discord.Interaction, activity_name: str):
         """Open a modal to manually set booked ministers' names for this activity."""
         self.svs_cursor.execute("SELECT fid FROM appointments WHERE appointment_type=? AND fid IS NOT NULL ORDER BY time", (activity_name,))
